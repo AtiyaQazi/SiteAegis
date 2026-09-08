@@ -3,7 +3,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import alerts, dashboard, health, sites
+from app.api import (
+    alerts,
+    cameras,
+    dashboard,
+    health,
+    incidents,
+    safety,
+    sites,
+    zones,
+)
 from app.services.monitoring_scheduler import (
     start_monitoring_scheduler,
     stop_monitoring_scheduler,
@@ -11,17 +20,12 @@ from app.services.monitoring_scheduler import (
 from app.websocket.manager import manager
 
 
-# ============================================================
-# LIFESPAN
-# ============================================================
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("=" * 60)
     print("SITEAEGIS BACKEND STARTING")
     print("=" * 60)
 
-    # Start monitoring scheduler
     try:
         start_monitoring_scheduler()
         print("[STARTUP] Monitoring scheduler started.")
@@ -33,10 +37,13 @@ async def lifespan(app: FastAPI):
     print("[STARTUP] WebSocket endpoint: /ws")
     print("[STARTUP] API endpoint: /api")
     print("[STARTUP] Alerts endpoint: /api/alerts")
+    print("[STARTUP] Cameras endpoint: /api/cameras")
+    print("[STARTUP] Zones endpoint: /api/zones")
+    print("[STARTUP] Safety endpoint: /api/safety")
+    print("[STARTUP] Incidents endpoint: /api/incidents")
 
     yield
 
-    # Stop monitoring scheduler
     print("[SHUTDOWN] Stopping monitoring scheduler...")
 
     try:
@@ -52,21 +59,16 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
 
 
-# ============================================================
-# FASTAPI APP
-# ============================================================
-
 app = FastAPI(
     title="SiteAegis API",
-    description="Real-time web security monitoring platform.",
-    version="1.0.0",
+    description=(
+        "Real-time web security monitoring and "
+        "construction site safety intelligence platform."
+    ),
+    version="1.4.0",
     lifespan=lifespan,
 )
 
-
-# ============================================================
-# CORS
-# ============================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -79,10 +81,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ============================================================
-# API ROUTES
-# ============================================================
 
 app.include_router(
     sites.router,
@@ -104,10 +102,26 @@ app.include_router(
     prefix="/api",
 )
 
+app.include_router(
+    cameras.router,
+    prefix="/api",
+)
 
-# ============================================================
-# ROOT
-# ============================================================
+app.include_router(
+    zones.router,
+    prefix="/api",
+)
+
+app.include_router(
+    safety.router,
+    prefix="/api",
+)
+
+app.include_router(
+    incidents.router,
+    prefix="/api",
+)
+
 
 @app.get("/")
 def root():
@@ -117,12 +131,16 @@ def root():
         "message": "SiteAegis backend is running.",
         "api": "/api",
         "websocket": "/ws",
+        "modules": {
+            "web_security_monitoring": True,
+            "construction_safety": True,
+            "cameras": True,
+            "zones": True,
+            "safety_events": True,
+            "incidents": True,
+        },
     }
 
-
-# ============================================================
-# WEBSOCKET
-# ============================================================
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -133,14 +151,9 @@ async def websocket_endpoint(websocket: WebSocket):
         ws://127.0.0.1:8000/ws
     """
 
-    # Register connection ONCE
     await manager.connect(websocket)
 
     try:
-        # ----------------------------------------------------
-        # Initial connection confirmation
-        # ----------------------------------------------------
-
         await websocket.send_json(
             {
                 "type": "connection",
@@ -153,20 +166,12 @@ async def websocket_endpoint(websocket: WebSocket):
             "[WEBSOCKET] Connection confirmation sent."
         )
 
-        # ----------------------------------------------------
-        # Keep connection alive
-        # ----------------------------------------------------
-
         while True:
             message = await websocket.receive_text()
 
             print(
                 f"[WEBSOCKET] Received: {message}"
             )
-
-            # ------------------------------------------------
-            # Acknowledge frontend messages
-            # ------------------------------------------------
 
             await websocket.send_json(
                 {
@@ -186,10 +191,6 @@ async def websocket_endpoint(websocket: WebSocket):
         )
 
     finally:
-        # ----------------------------------------------------
-        # Always remove connection
-        # ----------------------------------------------------
-
         manager.disconnect(websocket)
 
         print(
