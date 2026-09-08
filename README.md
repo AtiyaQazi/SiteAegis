@@ -669,6 +669,4 @@ GitHub Repository:
 
 This project is intended for educational, research, and portfolio purposes.
 
-````
-
 
