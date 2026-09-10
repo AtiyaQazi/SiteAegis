@@ -1,8 +1,3 @@
-Haan, samajh gaya 👍 Tum **plain Markdown text** chahte ho — yani `#`, `##`, `-`, ``` waghera ke saath, **koi writing-box nahi**.
-
-Neeche wala text **direct copy** karo aur GitHub ke README editor mein paste karo:
-
-````markdown
 # SiteAegis
 
 ### Security Intelligence Platform
@@ -757,7 +752,3 @@ Real-world deployment would require additional validation, security hardening, m
 
 **Web Security × Real-Time Monitoring × Computer Vision × Construction Safety**
 
-```
-
-**Bas isi ko copy karna hai.** GitHub editor mein paste karne ke baad **Preview changes** dekho. Phir neeche **Commit changes** kar dena.
-```
