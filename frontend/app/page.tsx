@@ -70,25 +70,39 @@ type Activity = {
   timestamp: string;
 };
 
+type AlertFilter =
+  | "all"
+  | "unread"
+  | "findings"
+  | "status"
+  | "security";
+
 export default function Home() {
   const [connected, setConnected] = useState(false);
 
   const [sites, setSites] = useState<Site[]>([]);
-
-  const [updates, setUpdates] = useState<
-    MonitoringUpdate[]
-  >([]);
-
+  const [updates, setUpdates] = useState<MonitoringUpdate[]>([]);
   const [lastUpdate, setLastUpdate] =
     useState<MonitoringUpdate | null>(null);
 
   const [loadingSites, setLoadingSites] =
     useState(true);
 
-  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [sitesError, setSitesError] =
+    useState<string | null>(null);
 
+  const [retryingSites, setRetryingSites] =
+    useState(false);
+
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [alertsLoading, setAlertsLoading] =
     useState(true);
+
+  const [alertsError, setAlertsError] =
+    useState<string | null>(null);
+
+  const [retryingAlerts, setRetryingAlerts] =
+    useState(false);
 
   const [unreadAlertCount, setUnreadAlertCount] =
     useState(0);
@@ -99,8 +113,13 @@ export default function Home() {
   const [markingAllRead, setMarkingAllRead] =
     useState(false);
 
-  const wsRef =
-    useRef<WebSocket | null>(null);
+  const [alertActionError, setAlertActionError] =
+    useState<string | null>(null);
+
+  const [alertFilter, setAlertFilter] =
+    useState<AlertFilter>("all");
+
+  const wsRef = useRef<WebSocket | null>(null);
 
   const reconnectTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(
@@ -113,46 +132,67 @@ export default function Home() {
   ============================================================
   */
 
+  async function loadSites(
+    isRetry = false,
+  ) {
+    if (isRetry) {
+      setRetryingSites(true);
+    } else {
+      setLoadingSites(true);
+    }
+
+    setSitesError(null);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/sites`,
+        {
+          cache: "no-store",
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Sites request failed: ${response.status}`,
+        );
+      }
+
+      const data = await response.json();
+
+      if (!Array.isArray(data)) {
+        throw new Error(
+          "Invalid sites response received from backend.",
+        );
+      }
+
+      setSites(data);
+    } catch (error) {
+      console.error(
+        "Failed to load sites:",
+        error,
+      );
+
+      setSitesError(
+        "Unable to load registered sites. Make sure the SiteAegis backend is running.",
+      );
+    } finally {
+      setLoadingSites(false);
+      setRetryingSites(false);
+    }
+  }
+
   useEffect(() => {
     let active = true;
 
-    async function loadSites() {
-      try {
-        const response = await fetch(
-          `${API_URL}/api/sites`,
-          {
-            cache: "no-store",
-          },
-        );
-
-        if (!response.ok) {
-          throw new Error(
-            `Sites request failed: ${response.status}`,
-          );
-        }
-
-        const data =
-          await response.json();
-
-        if (
-          active &&
-          Array.isArray(data)
-        ) {
-          setSites(data);
-        }
-      } catch (error) {
-        console.error(
-          "Failed to load sites:",
-          error,
-        );
-      } finally {
-        if (active) {
-          setLoadingSites(false);
-        }
+    async function initialLoad() {
+      if (!active) {
+        return;
       }
+
+      await loadSites();
     }
 
-    loadSites();
+    initialLoad();
 
     return () => {
       active = false;
@@ -161,30 +201,28 @@ export default function Home() {
 
   /*
   ============================================================
-  LOAD ALERTS + REAL UNREAD COUNT
+  LOAD ALERTS
   ============================================================
   */
 
-  async function loadAlerts() {
-    try {
-      const [
-        alertsResponse,
-        countResponse,
-      ] = await Promise.all([
-        fetch(
-          `${API_URL}/api/alerts?limit=50`,
-          {
-            cache: "no-store",
-          },
-        ),
+  async function loadAlerts(
+    isRetry = false,
+  ) {
+    if (isRetry) {
+      setRetryingAlerts(true);
+    } else {
+      setAlertsLoading(true);
+    }
 
-        fetch(
-          `${API_URL}/api/alerts/count`,
-          {
-            cache: "no-store",
-          },
-        ),
-      ]);
+    setAlertsError(null);
+
+    try {
+      const alertsResponse = await fetch(
+        `${API_URL}/api/alerts?limit=50`,
+        {
+          cache: "no-store",
+        },
+      );
 
       if (!alertsResponse.ok) {
         throw new Error(
@@ -192,23 +230,32 @@ export default function Home() {
         );
       }
 
+      const alertsData =
+        await alertsResponse.json();
+
+      if (!Array.isArray(alertsData)) {
+        throw new Error(
+          "Invalid alerts response received from backend.",
+        );
+      }
+
+      const countResponse = await fetch(
+        `${API_URL}/api/alerts/count`,
+        {
+          cache: "no-store",
+        },
+      );
+
       if (!countResponse.ok) {
         throw new Error(
           `Alert count request failed: ${countResponse.status}`,
         );
       }
 
-      const alertsData =
-        await alertsResponse.json();
-
       const countData =
         await countResponse.json();
 
-      if (
-        Array.isArray(alertsData)
-      ) {
-        setAlerts(alertsData);
-      }
+      setAlerts(alertsData);
 
       if (
         countData &&
@@ -224,8 +271,13 @@ export default function Home() {
         "Failed to load alerts:",
         error,
       );
+
+      setAlertsError(
+        "Unable to load security alerts. Make sure the SiteAegis backend is running.",
+      );
     } finally {
       setAlertsLoading(false);
+      setRetryingAlerts(false);
     }
   }
 
@@ -246,16 +298,30 @@ export default function Home() {
       return;
     }
 
+    const selectedAlert =
+      alerts.find(
+        (alert) =>
+          String(alert.alert_id) ===
+          String(alertId),
+      );
+
+    if (
+      !selectedAlert ||
+      selectedAlert.is_read
+    ) {
+      return;
+    }
+
     setAlertActionId(alertId);
+    setAlertActionError(null);
 
     try {
-      const response =
-        await fetch(
-          `${API_URL}/api/alerts/${alertId}/read`,
-          {
-            method: "PATCH",
-          },
-        );
+      const response = await fetch(
+        `${API_URL}/api/alerts/${alertId}/read`,
+        {
+          method: "PATCH",
+        },
+      );
 
       if (!response.ok) {
         throw new Error(
@@ -277,15 +343,39 @@ export default function Home() {
 
       setUnreadAlertCount(
         (previous) =>
-          Math.max(
-            0,
-            previous - 1,
-          ),
+          Math.max(0, previous - 1),
       );
+
+      const countResponse =
+        await fetch(
+          `${API_URL}/api/alerts/count`,
+          {
+            cache: "no-store",
+          },
+        );
+
+      if (countResponse.ok) {
+        const countData =
+          await countResponse.json();
+
+        if (
+          countData &&
+          typeof countData.unread ===
+            "number"
+        ) {
+          setUnreadAlertCount(
+            countData.unread,
+          );
+        }
+      }
     } catch (error) {
       console.error(
         "Failed to mark alert as read:",
         error,
+      );
+
+      setAlertActionError(
+        "Could not mark this alert as read. Please try again.",
       );
     } finally {
       setAlertActionId(null);
@@ -299,16 +389,20 @@ export default function Home() {
   */
 
   async function markAllAlertsAsRead() {
+    if (markingAllRead) {
+      return;
+    }
+
     setMarkingAllRead(true);
+    setAlertActionError(null);
 
     try {
-      const response =
-        await fetch(
-          `${API_URL}/api/alerts/read-all`,
-          {
-            method: "PATCH",
-          },
-        );
+      const response = await fetch(
+        `${API_URL}/api/alerts/read-all`,
+        {
+          method: "PATCH",
+        },
+      );
 
       if (!response.ok) {
         throw new Error(
@@ -324,10 +418,37 @@ export default function Home() {
       );
 
       setUnreadAlertCount(0);
+
+      const countResponse =
+        await fetch(
+          `${API_URL}/api/alerts/count`,
+          {
+            cache: "no-store",
+          },
+        );
+
+      if (countResponse.ok) {
+        const countData =
+          await countResponse.json();
+
+        if (
+          countData &&
+          typeof countData.unread ===
+            "number"
+        ) {
+          setUnreadAlertCount(
+            countData.unread,
+          );
+        }
+      }
     } catch (error) {
       console.error(
         "Failed to mark all alerts as read:",
         error,
+      );
+
+      setAlertActionError(
+        "Could not mark all alerts as read. Please try again.",
       );
     } finally {
       setMarkingAllRead(false);
@@ -347,28 +468,15 @@ export default function Home() {
       | ReturnType<typeof setTimeout>
       | null = null;
 
-    /*
-    ------------------------------------------------------------
-    CLEAR RECONNECT TIMER
-    ------------------------------------------------------------
-    */
-
     function clearReconnectTimer() {
       if (reconnectTimerRef.current) {
         clearTimeout(
           reconnectTimerRef.current,
         );
 
-        reconnectTimerRef.current =
-          null;
+        reconnectTimerRef.current = null;
       }
     }
-
-    /*
-    ------------------------------------------------------------
-    CLEAR INITIAL CONNECTION TIMER
-    ------------------------------------------------------------
-    */
 
     function clearInitialConnectionTimer() {
       if (initialConnectionTimer) {
@@ -380,42 +488,29 @@ export default function Home() {
       }
     }
 
-    /*
-    ------------------------------------------------------------
-    MERGE REAL-TIME ALERTS
-    ------------------------------------------------------------
-    */
-
     function mergeRealtimeAlerts(
       incomingAlerts: Alert[],
     ) {
       if (
-        !Array.isArray(
-          incomingAlerts,
-        ) ||
+        !Array.isArray(incomingAlerts) ||
         incomingAlerts.length === 0
       ) {
         return;
       }
 
       setAlerts((previous) => {
-        const incomingIds =
-          new Set(
-            incomingAlerts.map(
-              (alert) =>
-                String(
-                  alert.alert_id,
-                ),
-            ),
-          );
+        const incomingIds = new Set(
+          incomingAlerts.map(
+            (alert) =>
+              String(alert.alert_id),
+          ),
+        );
 
         const existingWithoutDuplicates =
           previous.filter(
             (alert) =>
               !incomingIds.has(
-                String(
-                  alert.alert_id,
-                ),
+                String(alert.alert_id),
               ),
           );
 
@@ -424,57 +519,7 @@ export default function Home() {
           ...existingWithoutDuplicates,
         ].slice(0, 50);
       });
-
-      /*
-      ----------------------------------------------------------
-      UPDATE REAL UNREAD COUNT
-      ----------------------------------------------------------
-      */
-
-      setUnreadAlertCount(
-        (previous) => {
-          const newUnreadCount =
-            incomingAlerts.filter(
-              (alert) =>
-                !alert.is_read,
-            ).length;
-
-          const incomingIds =
-            new Set(
-              incomingAlerts.map(
-                (alert) =>
-                  String(
-                    alert.alert_id,
-                  ),
-              ),
-            );
-
-          const replacedUnreadCount =
-            alerts.filter(
-              (alert) =>
-                incomingIds.has(
-                  String(
-                    alert.alert_id,
-                  ),
-                ) &&
-                !alert.is_read,
-            ).length;
-
-          return Math.max(
-            0,
-            previous -
-              replacedUnreadCount +
-              newUnreadCount,
-          );
-        },
-      );
     }
-
-    /*
-    ------------------------------------------------------------
-    HANDLE MONITORING UPDATE
-    ------------------------------------------------------------
-    */
 
     function handleMonitoringUpdate(
       data: MonitoringUpdate,
@@ -497,19 +542,7 @@ export default function Home() {
         data,
       );
 
-      /*
-      ----------------------------------------------------------
-      SAVE LATEST UPDATE
-      ----------------------------------------------------------
-      */
-
       setLastUpdate(data);
-
-      /*
-      ----------------------------------------------------------
-      UPDATE ACTIVITY HISTORY
-      ----------------------------------------------------------
-      */
 
       setUpdates((previous) => {
         const next = [
@@ -528,41 +561,23 @@ export default function Home() {
         return next.slice(0, 10);
       });
 
-      /*
-      ----------------------------------------------------------
-      UPDATE MATCHING SITE
-      ----------------------------------------------------------
-      */
-
       setSites((previous) => {
         const updated =
           previous.map(
             (site) =>
-              String(
-                site.site_id,
-              ) ===
-              String(
-                data.site.site_id,
-              )
+              String(site.site_id) ===
+              String(data.site.site_id)
                 ? {
                     ...site,
                     ...data.site,
-
                     last_scan_id:
-                      data.scan
-                        .scan_id,
-
+                      data.scan.scan_id,
                     last_status:
-                      data.scan
-                        .status,
-
+                      data.scan.status,
                     last_risk_score:
-                      data.scan
-                        .risk_score,
-
+                      data.scan.risk_score,
                     last_risk_level:
-                      data.scan
-                        .risk_level,
+                      data.scan.risk_level,
                   }
                 : site,
           );
@@ -570,9 +585,7 @@ export default function Home() {
         const exists =
           previous.some(
             (site) =>
-              String(
-                site.site_id,
-              ) ===
+              String(site.site_id) ===
               String(
                 data.site.site_id,
               ),
@@ -581,16 +594,12 @@ export default function Home() {
         if (!exists) {
           updated.push({
             ...data.site,
-
             last_scan_id:
               data.scan.scan_id,
-
             last_status:
               data.scan.status,
-
             last_risk_score:
               data.scan.risk_score,
-
             last_risk_level:
               data.scan.risk_level,
           });
@@ -599,26 +608,13 @@ export default function Home() {
         return updated;
       });
 
-      /*
-      ----------------------------------------------------------
-      REAL-TIME ALERTS
-      ----------------------------------------------------------
-      */
-
       if (
-        Array.isArray(
-          data.alerts,
-        ) &&
+        Array.isArray(data.alerts) &&
         data.alerts.length > 0
       ) {
         mergeRealtimeAlerts(
           data.alerts,
         );
-
-        /*
-        Also refresh the authoritative
-        backend count.
-        */
 
         fetch(
           `${API_URL}/api/alerts/count`,
@@ -656,20 +652,12 @@ export default function Home() {
       }
     }
 
-    /*
-    ============================================================
-    SCHEDULE RECONNECT
-    ============================================================
-    */
-
     function scheduleReconnect() {
       if (!effectActive) {
         return;
       }
 
-      if (
-        reconnectTimerRef.current
-      ) {
+      if (reconnectTimerRef.current) {
         return;
       }
 
@@ -689,12 +677,6 @@ export default function Home() {
           connectWebSocket();
         }, 3000);
     }
-
-    /*
-    ============================================================
-    CONNECT WEBSOCKET
-    ============================================================
-    */
 
     function connectWebSocket() {
       if (!effectActive) {
@@ -723,18 +705,11 @@ export default function Home() {
         "Connecting to SiteAegis WebSocket...",
       );
 
-      const ws =
-        new WebSocket(
-          WS_URL,
-        );
+      const ws = new WebSocket(
+        WS_URL,
+      );
 
       wsRef.current = ws;
-
-      /*
-      ==========================================================
-      ON OPEN
-      ==========================================================
-      */
 
       ws.onopen = () => {
         if (
@@ -766,15 +741,7 @@ export default function Home() {
         }
       };
 
-      /*
-      ==========================================================
-      ON MESSAGE
-      ==========================================================
-      */
-
-      ws.onmessage = (
-        event,
-      ) => {
+      ws.onmessage = (event) => {
         if (
           !effectActive ||
           wsRef.current !== ws
@@ -793,24 +760,12 @@ export default function Home() {
             data,
           );
 
-          /*
-          --------------------------------------------------------
-          CONNECTION EVENT
-          --------------------------------------------------------
-          */
-
           if (
             data?.type ===
             "connection"
           ) {
             return;
           }
-
-          /*
-          --------------------------------------------------------
-          MONITORING UPDATE
-          --------------------------------------------------------
-          */
 
           if (
             data?.type ===
@@ -825,12 +780,6 @@ export default function Home() {
             return;
           }
 
-          /*
-          --------------------------------------------------------
-          ACK / OTHER EVENT
-          --------------------------------------------------------
-          */
-
           console.log(
             "SiteAegis event received:",
             data,
@@ -843,12 +792,6 @@ export default function Home() {
           );
         }
       };
-
-      /*
-      ==========================================================
-      ON ERROR
-      ==========================================================
-      */
 
       ws.onerror = () => {
         if (
@@ -863,15 +806,7 @@ export default function Home() {
         );
       };
 
-      /*
-      ==========================================================
-      ON CLOSE
-      ==========================================================
-      */
-
-      ws.onclose = (
-        event,
-      ) => {
+      ws.onclose = (event) => {
         if (
           wsRef.current === ws
         ) {
@@ -892,12 +827,6 @@ export default function Home() {
       };
     }
 
-    /*
-    ============================================================
-    INITIAL CONNECTION
-    ============================================================
-    */
-
     initialConnectionTimer =
       setTimeout(() => {
         initialConnectionTimer =
@@ -907,12 +836,6 @@ export default function Home() {
           connectWebSocket();
         }
       }, 100);
-
-    /*
-    ============================================================
-    CLEANUP
-    ============================================================
-    */
 
     return () => {
       effectActive = false;
@@ -938,9 +861,7 @@ export default function Home() {
               "Component cleanup",
             );
           } catch {
-            /*
-            Ignore cleanup errors.
-            */
+            // Ignore cleanup errors.
           }
         }
       }
@@ -968,8 +889,7 @@ export default function Home() {
     ).length;
 
   const latestRisk =
-    lastUpdate?.scan
-      .risk_score ??
+    lastUpdate?.scan.risk_score ??
     monitoredSites.find(
       (site) =>
         site.last_risk_score !==
@@ -979,21 +899,10 @@ export default function Home() {
     )?.last_risk_score ??
     null;
 
-  const latestFindings =
-    lastUpdate?.scan
-      .findings_count ??
-    0;
-
   const latestResponse =
     lastUpdate?.scan
       .response_time_ms ??
     null;
-
-  /*
-  ============================================================
-  ALERT COUNTS
-  ============================================================
-  */
 
   const unreadAlerts =
     unreadAlertCount;
@@ -1013,8 +922,7 @@ export default function Home() {
         for (const update of updates) {
           if (
             update.events &&
-            update.events.length >
-              0
+            update.events.length > 0
           ) {
             for (
               const event of
@@ -1067,13 +975,100 @@ export default function Home() {
           }
         }
 
-        return result.slice(
-          0,
-          10,
-        );
+        return result.slice(0, 10);
       },
       [updates],
     );
+
+  /*
+  ============================================================
+  FILTERED ALERTS
+  ============================================================
+  */
+
+  const filteredAlerts =
+    useMemo(() => {
+      switch (alertFilter) {
+        case "unread":
+          return alerts.filter(
+            (alert) =>
+              !alert.is_read,
+          );
+
+        case "findings":
+          return alerts.filter(
+            (alert) =>
+              alert.alert_type
+                .toUpperCase()
+                .includes("FINDING"),
+          );
+
+        case "status":
+          return alerts.filter(
+            (alert) =>
+              alert.alert_type
+                .toUpperCase()
+                .includes("STATUS"),
+          );
+
+        case "security":
+          return alerts.filter(
+            (alert) => {
+              const type =
+                alert.alert_type.toUpperCase();
+
+              return (
+                type.includes("RISK") ||
+                type.includes("SSL") ||
+                type.includes("SECURITY")
+              );
+            },
+          );
+
+        case "all":
+        default:
+          return alerts;
+      }
+    }, [alerts, alertFilter]);
+
+  const alertFilterCounts =
+    useMemo(() => {
+      return {
+        all: alerts.length,
+
+        unread: alerts.filter(
+          (alert) =>
+            !alert.is_read,
+        ).length,
+
+        findings: alerts.filter(
+          (alert) =>
+            alert.alert_type
+              .toUpperCase()
+              .includes("FINDING"),
+        ).length,
+
+        status: alerts.filter(
+          (alert) =>
+            alert.alert_type
+              .toUpperCase()
+              .includes("STATUS"),
+        ).length,
+
+        security: alerts.filter(
+          (alert) => {
+            const type =
+              alert.alert_type.toUpperCase();
+
+            return (
+              type.includes("RISK") ||
+              type.includes("SSL") ||
+              type.includes("SECURITY")
+            );
+          },
+        ).length,
+      };
+    }, [alerts]);
 
   /*
   ============================================================
@@ -1087,14 +1082,11 @@ export default function Home() {
     try {
       return new Date(
         timestamp,
-      ).toLocaleTimeString(
-        [],
-        {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        },
-      );
+      ).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
     } catch {
       return "--";
     }
@@ -1106,15 +1098,12 @@ export default function Home() {
     try {
       return new Date(
         timestamp,
-      ).toLocaleString(
-        [],
-        {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        },
-      );
+      ).toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
     } catch {
       return "--";
     }
@@ -1140,6 +1129,30 @@ export default function Home() {
     return severity.toLowerCase();
   }
 
+  function alertFilterLabel(
+    filter: AlertFilter,
+  ) {
+    switch (filter) {
+      case "all":
+        return "ALL";
+
+      case "unread":
+        return "UNREAD";
+
+      case "findings":
+        return "FINDINGS";
+
+      case "status":
+        return "STATUS";
+
+      case "security":
+        return "SECURITY";
+
+      default:
+        return "ALL";
+    }
+  }
+
   /*
   ============================================================
   UI
@@ -1155,9 +1168,7 @@ export default function Home() {
           </div>
 
           <div>
-            <h1>
-              SiteAegis
-            </h1>
+            <h1>SiteAegis</h1>
 
             <p>
               Security Intelligence Platform
@@ -1191,9 +1202,7 @@ export default function Home() {
           <h2>
             Observe.
             <br />
-            <span>
-              Detect.
-            </span>
+            <span>Detect.</span>
             <br />
             Respond.
           </h2>
@@ -1225,7 +1234,7 @@ export default function Home() {
             <small>
               {connected
                 ? "WebSocket stream active"
-                : "Waiting for backend"}
+                : "Live stream unavailable — reconnecting"}
             </small>
           </div>
         </div>
@@ -1240,11 +1249,15 @@ export default function Home() {
           <strong>
             {loadingSites
               ? "—"
-              : monitoredSites.length}
+              : sitesError
+                ? "!"
+                : monitoredSites.length}
           </strong>
 
           <small>
-            Registered monitoring targets
+            {sitesError
+              ? "Backend connection unavailable"
+              : "Registered monitoring targets"}
           </small>
         </div>
 
@@ -1254,7 +1267,11 @@ export default function Home() {
           </span>
 
           <strong className="online">
-            {onlineSites}
+            {loadingSites
+              ? "—"
+              : sitesError
+                ? "—"
+                : onlineSites}
           </strong>
 
           <small>
@@ -1291,11 +1308,15 @@ export default function Home() {
           <strong>
             {alertsLoading
               ? "—"
-              : unreadAlerts}
+              : alertsError
+                ? "!"
+                : unreadAlerts}
           </strong>
 
           <small>
-            Security alerts requiring attention
+            {alertsError
+              ? "Alert service unavailable"
+              : "Security alerts requiring attention"}
           </small>
         </div>
       </section>
@@ -1326,11 +1347,85 @@ export default function Home() {
 
               {lastUpdate?.scan
                 .status ??
-                "WAITING"}
+                (sitesError
+                  ? "OFFLINE"
+                  : "WAITING")}
             </div>
           </div>
 
-          {lastUpdate ? (
+          {sitesError ? (
+            <div className="empty-state">
+              <div className="empty-icon">
+                !
+              </div>
+
+              <h4>
+                Monitoring data unavailable
+              </h4>
+
+              <p>
+                SiteAegis could not
+                retrieve the registered
+                monitoring targets.
+                The backend may be
+                offline or temporarily
+                unavailable.
+              </p>
+
+              <button
+                type="button"
+                onClick={() =>
+                  loadSites(true)
+                }
+                disabled={
+                  retryingSites
+                }
+                style={{
+                  marginTop: "16px",
+                  border:
+                    "1px solid rgba(255,255,255,0.16)",
+                  background:
+                    "rgba(255,255,255,0.06)",
+                  color: "#fff",
+                  borderRadius:
+                    "999px",
+                  padding:
+                    "9px 16px",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  letterSpacing:
+                    "0.08em",
+                  cursor:
+                    retryingSites
+                      ? "default"
+                      : "pointer",
+                  opacity:
+                    retryingSites
+                      ? 0.55
+                      : 1,
+                }}
+              >
+                {retryingSites
+                  ? "RETRYING..."
+                  : "RETRY"}
+              </button>
+            </div>
+          ) : loadingSites ? (
+            <div className="empty-state">
+              <div className="empty-icon">
+                ◌
+              </div>
+
+              <h4>
+                Loading monitoring targets
+              </h4>
+
+              <p>
+                SiteAegis is retrieving
+                registered websites.
+              </p>
+            </div>
+          ) : lastUpdate ? (
             <div className="site-content">
               <div className="site-identity">
                 <div className="site-icon">
@@ -1365,9 +1460,7 @@ export default function Home() {
 
               <div className="metrics">
                 <div>
-                  <span>
-                    RISK
-                  </span>
+                  <span>RISK</span>
 
                   <strong
                     className={riskClass(
@@ -1447,12 +1540,14 @@ export default function Home() {
               </h4>
 
               <p>
-                The dashboard will
-                populate when
-                SiteAegis receives
-                its first monitoring
-                update through the
-                WebSocket stream.
+                Registered sites are
+                available, but no live
+                monitoring update has
+                arrived yet.
+                SiteAegis will populate
+                this panel when the
+                monitoring stream sends
+                its next scan.
               </p>
             </div>
           )}
@@ -1465,9 +1560,7 @@ export default function Home() {
                 LIVE STREAM
               </span>
 
-              <h3>
-                Activity
-              </h3>
+              <h3>Activity</h3>
             </div>
 
             <span className="event-count">
@@ -1475,7 +1568,19 @@ export default function Home() {
             </span>
           </div>
 
-          {activities.length > 0 ? (
+          {!connected &&
+          activities.length === 0 ? (
+            <div className="empty-activity">
+              <div className="stream-line" />
+
+              <p>
+                Live monitoring stream
+                is currently disconnected.
+                SiteAegis will reconnect
+                automatically.
+              </p>
+            </div>
+          ) : activities.length > 0 ? (
             <div className="activity-list">
               {activities.map(
                 (activity) => (
@@ -1519,13 +1624,18 @@ export default function Home() {
               <div className="stream-line" />
 
               <p>
-                No monitoring events
-                received yet.
+                Connected successfully.
+                Waiting for the first
+                monitoring event.
               </p>
             </div>
           )}
         </div>
       </section>
+
+      {/* =====================================================
+          ALERT CENTER
+          ===================================================== */}
 
       <section className="panel alerts-panel">
         <div className="panel-header">
@@ -1534,14 +1644,25 @@ export default function Home() {
               SECURITY ALERTS
             </span>
 
-            <h3>
-              Alert Center
-            </h3>
+            <h3>Alert Center</h3>
+
+            <small
+              style={{
+                display: "block",
+                marginTop: "6px",
+                opacity: 0.55,
+              }}
+            >
+              {alerts.length} total alerts ·{" "}
+              {unreadAlerts} requiring attention
+            </small>
           </div>
 
           <div className="alerts-actions">
             <span className="event-count">
-              {unreadAlerts} UNREAD
+              {alertsLoading
+                ? "— UNREAD"
+                : `${unreadAlerts} UNREAD`}
             </span>
 
             {unreadAlerts > 0 && (
@@ -1563,111 +1684,422 @@ export default function Home() {
           </div>
         </div>
 
-        {alertsLoading ? (
-          <div className="empty-state">
-            <div className="empty-icon">
-              ◌
-            </div>
-
-            <h4>
-              Loading security alerts
-            </h4>
-
-            <p>
-              SiteAegis is retrieving
-              the latest alerts.
-            </p>
+        {alertActionError && (
+          <div
+            style={{
+              marginBottom: "16px",
+              padding: "11px 14px",
+              border:
+                "1px solid rgba(255,255,255,0.10)",
+              borderRadius: "10px",
+              background:
+                "rgba(255,255,255,0.035)",
+              fontSize: "11px",
+              lineHeight: 1.5,
+              opacity: 0.8,
+            }}
+          >
+            {alertActionError}
           </div>
-        ) : alerts.length === 0 ? (
+        )}
+
+        {alertsError ? (
           <div className="empty-state">
             <div className="empty-icon">
-              ✓
+              !
             </div>
 
             <h4>
-              No security alerts
+              Alert service unavailable
             </h4>
 
             <p>
-              No alerts have been
-              generated by the
-              monitoring system yet.
+              SiteAegis could not
+              retrieve security alerts
+              from the backend. Existing
+              dashboard monitoring can
+              continue independently.
             </p>
+
+            <button
+              type="button"
+              onClick={() =>
+                loadAlerts(true)
+              }
+              disabled={
+                retryingAlerts
+              }
+              style={{
+                marginTop: "16px",
+                border:
+                  "1px solid rgba(255,255,255,0.16)",
+                background:
+                  "rgba(255,255,255,0.06)",
+                color: "#fff",
+                borderRadius:
+                  "999px",
+                padding:
+                  "9px 16px",
+                fontSize: "10px",
+                fontWeight: 700,
+                letterSpacing:
+                  "0.08em",
+                cursor:
+                  retryingAlerts
+                    ? "default"
+                    : "pointer",
+                opacity:
+                  retryingAlerts
+                    ? 0.55
+                    : 1,
+              }}
+            >
+              {retryingAlerts
+                ? "RETRYING..."
+                : "RETRY ALERTS"}
+            </button>
           </div>
         ) : (
-          <div className="alerts-list">
-            {alerts.map(
-              (alert) => (
+          <>
+            {!alertsLoading &&
+              alerts.length > 0 && (
                 <div
-                  className={`alert-item ${
-                    alert.is_read
-                      ? "read"
-                      : "unread"
-                  }`}
-                  key={alert.alert_id}
+                  style={{
+                    display: "flex",
+                    alignItems:
+                      "center",
+                    justifyContent:
+                      "space-between",
+                    gap: "12px",
+                    flexWrap:
+                      "wrap",
+                    marginBottom:
+                      "20px",
+                    paddingBottom:
+                      "16px",
+                    borderBottom:
+                      "1px solid rgba(255,255,255,0.07)",
+                  }}
                 >
                   <div
-                    className={`alert-severity ${alertSeverityClass(
-                      alert.severity,
-                    )}`}
+                    style={{
+                      display:
+                        "flex",
+                      gap: "8px",
+                      flexWrap:
+                        "wrap",
+                    }}
                   >
-                    {alert.severity
-                      .slice(0, 1)
-                      .toUpperCase()}
+                    {(
+                      [
+                        "all",
+                        "unread",
+                        "findings",
+                        "status",
+                        "security",
+                      ] as AlertFilter[]
+                    ).map(
+                      (
+                        filter,
+                      ) => {
+                        const active =
+                          alertFilter ===
+                          filter;
+
+                        return (
+                          <button
+                            key={
+                              filter
+                            }
+                            type="button"
+                            onClick={() =>
+                              setAlertFilter(
+                                filter,
+                              )
+                            }
+                            style={{
+                              border:
+                                active
+                                  ? "1px solid rgba(255,255,255,0.28)"
+                                  : "1px solid rgba(255,255,255,0.09)",
+                              background:
+                                active
+                                  ? "rgba(255,255,255,0.10)"
+                                  : "rgba(255,255,255,0.025)",
+                              color:
+                                active
+                                  ? "#ffffff"
+                                  : "rgba(255,255,255,0.55)",
+                              borderRadius:
+                                "999px",
+                              padding:
+                                "7px 12px",
+                              fontSize:
+                                "10px",
+                              fontWeight:
+                                700,
+                              letterSpacing:
+                                "0.08em",
+                              cursor:
+                                "pointer",
+                              transition:
+                                "all 0.2s ease",
+                            }}
+                          >
+                            {alertFilterLabel(
+                              filter,
+                            )}{" "}
+                            <span
+                              style={{
+                                opacity:
+                                  0.55,
+                              }}
+                            >
+                              {
+                                alertFilterCounts[
+                                  filter
+                                ]
+                              }
+                            </span>
+                          </button>
+                        );
+                      },
+                    )}
                   </div>
 
-                  <div className="alert-body">
-                    <div className="alert-title-row">
-                      <strong>
-                        {alert.title}
-                      </strong>
+                  <span
+                    style={{
+                      fontSize:
+                        "10px",
+                      letterSpacing:
+                        "0.08em",
+                      opacity:
+                        0.45,
+                      textTransform:
+                        "uppercase",
+                    }}
+                  >
+                    Showing{" "}
+                    {
+                      filteredAlerts.length
+                    }{" "}
+                    alerts
+                  </span>
+                </div>
+              )}
 
-                      {!alert.is_read && (
-                        <span className="unread-dot" />
-                      )}
-                    </div>
+            {alertsLoading ? (
+              <div className="empty-state">
+                <div className="empty-icon">
+                  ◌
+                </div>
 
-                    <p>
-                      {alert.message}
-                    </p>
+                <h4>
+                  Loading security alerts
+                </h4>
 
-                    <div className="alert-meta">
-                      <span>
-                        {alert.alert_type}
-                      </span>
+                <p>
+                  SiteAegis is
+                  retrieving the
+                  latest alerts.
+                </p>
+              </div>
+            ) : alerts.length ===
+              0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">
+                  ✓
+                </div>
 
-                      <span>
-                        {formatDateTime(
-                          alert.created_at,
-                        )}
-                      </span>
-                    </div>
-                  </div>
+                <h4>
+                  No security alerts
+                </h4>
 
-                  {!alert.is_read && (
-                    <button
-                      type="button"
-                      className="alert-read-button"
-                      onClick={() =>
-                        markAlertAsRead(
-                          alert.alert_id,
-                        )
-                      }
-                      disabled={
-                        alertActionId ===
+                <p>
+                  No alerts have
+                  been generated
+                  by the monitoring
+                  system yet.
+                </p>
+              </div>
+            ) : filteredAlerts.length ===
+              0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">
+                  ✓
+                </div>
+
+                <h4>
+                  No{" "}
+                  {alertFilterLabel(
+                    alertFilter,
+                  ).toLowerCase()}{" "}
+                  alerts
+                </h4>
+
+                <p>
+                  There are no
+                  alerts matching
+                  the selected
+                  filter.
+                </p>
+              </div>
+            ) : (
+              <div className="alerts-list">
+                {filteredAlerts.map(
+                  (
+                    alert,
+                    index,
+                  ) => (
+                    <div
+                      className={`alert-item ${
+                        alert.is_read
+                          ? "read"
+                          : "unread"
+                      }`}
+                      key={
                         alert.alert_id
                       }
+                      style={{
+                        position:
+                          "relative",
+                        opacity:
+                          alert.is_read
+                            ? 0.62
+                            : 1,
+                        transition:
+                          "opacity 0.2s ease, transform 0.2s ease",
+                      }}
                     >
-                      {alertActionId ===
-                      alert.alert_id
-                        ? "..."
-                        : "MARK READ"}
-                    </button>
-                  )}
-                </div>
-              ),
+                      {!alert.is_read && (
+                        <div
+                          style={{
+                            position:
+                              "absolute",
+                            left: 0,
+                            top: "14px",
+                            bottom:
+                              "14px",
+                            width:
+                              "2px",
+                            borderRadius:
+                              "4px",
+                            background:
+                              "currentColor",
+                            opacity:
+                              0.8,
+                          }}
+                        />
+                      )}
+
+                      <div
+                        className={`alert-severity ${alertSeverityClass(
+                          alert.severity,
+                        )}`}
+                      >
+                        {alert.severity
+                          .slice(
+                            0,
+                            1,
+                          )
+                          .toUpperCase()}
+                      </div>
+
+                      <div className="alert-body">
+                        <div className="alert-title-row">
+                          <strong>
+                            {
+                              alert.title
+                            }
+                          </strong>
+
+                          {!alert.is_read && (
+                            <span className="unread-dot" />
+                          )}
+
+                          {index ===
+                            0 && (
+                            <span
+                              style={{
+                                marginLeft:
+                                  "6px",
+                                fontSize:
+                                  "9px",
+                                fontWeight:
+                                  700,
+                                letterSpacing:
+                                  "0.08em",
+                                padding:
+                                  "3px 7px",
+                                borderRadius:
+                                  "999px",
+                                background:
+                                  "rgba(255,255,255,0.07)",
+                                border:
+                                  "1px solid rgba(255,255,255,0.10)",
+                                opacity:
+                                  0.7,
+                              }}
+                            >
+                              LATEST
+                            </span>
+                          )}
+                        </div>
+
+                        <p>
+                          {
+                            alert.message
+                          }
+                        </p>
+
+                        <div className="alert-meta">
+                          <span>
+                            {
+                              alert.alert_type
+                            }
+                          </span>
+
+                          <span>
+                            SITE #
+                            {
+                              alert.site_id
+                            }
+                          </span>
+
+                          <span>
+                            {formatDateTime(
+                              alert.created_at,
+                            )}
+                          </span>
+                        </div>
+                      </div>
+
+                      {!alert.is_read && (
+                        <button
+                          type="button"
+                          className="alert-read-button"
+                          onClick={() =>
+                            markAlertAsRead(
+                              alert.alert_id,
+                            )
+                          }
+                          disabled={
+                            alertActionId ===
+                            alert.alert_id
+                          }
+                        >
+                          {alertActionId ===
+                          alert.alert_id
+                            ? "..."
+                            : "MARK READ"}
+                        </button>
+                      )}
+                    </div>
+                  ),
+                )}
+              </div>
             )}
-          </div>
+          </>
         )}
       </section>
 

@@ -9,19 +9,27 @@ from app.api import (
     dashboard,
     health,
     incidents,
+    routes,
     safety,
     sites,
     zones,
 )
+
 from app.services.monitoring_scheduler import (
     start_monitoring_scheduler,
     stop_monitoring_scheduler,
 )
+
 from app.websocket.manager import manager
 
 
+# ============================================================
+# APPLICATION LIFESPAN
+# ============================================================
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
     print("=" * 60)
     print("SITEAEGIS BACKEND STARTING")
     print("=" * 60)
@@ -36,6 +44,8 @@ async def lifespan(app: FastAPI):
 
     print("[STARTUP] WebSocket endpoint: /ws")
     print("[STARTUP] API endpoint: /api")
+    print("[STARTUP] Scanner endpoint: /api/scan")
+    print("[STARTUP] PPE endpoint: /api/scan/ppe")
     print("[STARTUP] Alerts endpoint: /api/alerts")
     print("[STARTUP] Cameras endpoint: /api/cameras")
     print("[STARTUP] Zones endpoint: /api/zones")
@@ -59,16 +69,24 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
 
 
+# ============================================================
+# FASTAPI APPLICATION
+# ============================================================
+
 app = FastAPI(
     title="SiteAegis API",
     description=(
         "Real-time web security monitoring and "
         "construction site safety intelligence platform."
     ),
-    version="1.4.0",
+    version="1.5.0",
     lifespan=lifespan,
 )
 
+
+# ============================================================
+# CORS
+# ============================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -81,6 +99,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ============================================================
+# API ROUTERS
+# ============================================================
+
+app.include_router(
+    routes.router,
+    prefix="/api",
+)
 
 app.include_router(
     sites.router,
@@ -123,8 +150,13 @@ app.include_router(
 )
 
 
+# ============================================================
+# ROOT
+# ============================================================
+
 @app.get("/")
 def root():
+
     return {
         "name": "SiteAegis",
         "status": "online",
@@ -134,6 +166,7 @@ def root():
         "modules": {
             "web_security_monitoring": True,
             "construction_safety": True,
+            "ppe_detection": True,
             "cameras": True,
             "zones": True,
             "safety_events": True,
@@ -142,18 +175,19 @@ def root():
     }
 
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """
-    Main SiteAegis WebSocket endpoint.
+# ============================================================
+# WEBSOCKET
+# ============================================================
 
-    Frontend connects to:
-        ws://127.0.0.1:8000/ws
-    """
+@app.websocket("/ws")
+async def websocket_endpoint(
+    websocket: WebSocket,
+):
 
     await manager.connect(websocket)
 
     try:
+
         await websocket.send_json(
             {
                 "type": "connection",
@@ -167,6 +201,7 @@ async def websocket_endpoint(websocket: WebSocket):
         )
 
         while True:
+
             message = await websocket.receive_text()
 
             print(
@@ -181,16 +216,19 @@ async def websocket_endpoint(websocket: WebSocket):
             )
 
     except WebSocketDisconnect:
+
         print(
             "[WEBSOCKET] Client disconnected normally."
         )
 
     except Exception as exc:
+
         print(
             f"[WEBSOCKET ERROR] {exc}"
         )
 
     finally:
+
         manager.disconnect(websocket)
 
         print(

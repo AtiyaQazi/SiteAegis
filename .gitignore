@@ -1,5 +1,4 @@
-@"
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -33,4 +32,16 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
-"@ | Set-Content .gitignore
+
+# Test / generated files
+backend/runs/
+backend/*_test.jpg
+backend/test_*.py
+
+# YOLO model files
+backend/yolo11n.pt
+backend/models/*.pt
+
+# Temporary dependency backups
+backend/requirements.*-backup.txt
+backend/requirements.before-cleanup.txt
