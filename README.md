@@ -1,265 +1,497 @@
 # SiteAegis
 
-### Security Intelligence Platform
+## Real-Time Web Security & Construction Safety Intelligence
 
-**Observe. Detect. Respond.**
+SiteAegis is a full-stack monitoring and intelligence platform that combines **automated web security monitoring** with **AI-powered construction safety analysis**.
 
-SiteAegis is a self-directed full-stack engineering project built for personal learning and technical exploration.
+The platform monitors registered websites for availability, HTTP behavior, SSL/TLS validity, security headers, security findings, and risk changes. At the same time, its computer-vision pipeline analyzes construction-site images and video to identify safety conditions including PPE violations, restricted-zone entry, worker-machine proximity, crowding, falls, and unsafe movement.
 
-It combines **web security monitoring** with **construction-site safety intelligence** into one unified platform.
+Detected conditions are converted into structured events, risk assessments, alerts, and incidents. The platform provides REST APIs, real-time WebSocket communication, PostgreSQL persistence, Redis/Memurai integration, and a unified monitoring dashboard.
 
-The system monitors registered websites, analyzes their security posture, tracks changes over time, generates alerts, and provides real-time monitoring updates.
-
-It also includes an AI-assisted construction safety module using **YOLO-based computer vision** for PPE detection and evidence-aware safety analysis.
+> **Safety note:** Computer-vision detections are automated indicators intended to support monitoring and response. They do not replace qualified safety personnel, established safety procedures, or professional site assessments.
 
 ---
 
-## Overview
+# Platform Overview
 
-Modern digital and physical environments require continuous monitoring instead of one-time checks.
+SiteAegis operates across two connected intelligence domains.
 
-SiteAegis explores how security signals can be collected, analyzed, stored, and presented through a full-stack application.
+### Web Security Intelligence
 
-The platform currently focuses on two areas:
+The web-security engine provides:
 
-- Web Security Intelligence
-- Construction Safety Intelligence
+* Website availability monitoring
+* HTTP status monitoring
+* Response-time measurement
+* SSL/TLS validation
+* Security-header analysis
+* Security finding detection
+* Risk scoring
+* Risk-level classification
+* Historical scan records
+* Scheduled monitoring
+* Monitoring alerts
+* Real-time monitoring updates
 
-The main workflow is:
+### Construction Safety Intelligence
 
-**Observe → Detect → Analyze → Alert → Respond**
+The safety engine provides:
 
----
-
-## Core Features
-
-### Web Security Monitoring
-
-SiteAegis can monitor registered websites and collect:
-
-- Website availability
-- HTTP status code
-- Response time
-- IP address
-- SSL/TLS status
-- SSL/TLS certificate information
-- Certificate issuer
-- Certificate validity
-- HTTP security headers
-- Missing security headers
-- Security findings
-- Security score
-- Risk classification
-- Scan history
-- Security trends
-
-### Security Headers
-
-The platform checks important security headers including:
-
-- Strict-Transport-Security
-- Content-Security-Policy
-- X-Content-Type-Options
-- X-Frame-Options
-- Referrer-Policy
-- Permissions-Policy
+* PPE detection
+* Restricted-zone entry detection
+* Worker-machine proximity analysis
+* Crowding detection
+* Fall detection
+* Unsafe movement detection
+* Image analysis
+* Video analysis
+* Background camera analysis
+* Safety-event generation
+* Incident management
+* Real-time safety updates
 
 ---
 
-## Security Scoring
-
-SiteAegis calculates a security score based on collected security signals.
-
-The analysis considers factors such as:
-
-- Website availability
-- SSL/TLS configuration
-- Security headers
-- Security findings
-- Overall security posture
-
-Historical results can be compared to identify changes in the monitored website's security condition.
-
----
-
-## Automated Monitoring
-
-SiteAegis uses **APScheduler** for automated monitoring.
-
-The monitoring process can:
-
-1. Retrieve registered websites.
-2. Check website availability.
-3. Analyze SSL/TLS.
-4. Inspect security headers.
-5. Calculate security score.
-6. Compare results with previous scans.
-7. Generate monitoring events.
-8. Create alerts when relevant changes occur.
-9. Broadcast updates through WebSockets.
-
----
-
-## Real-Time WebSocket Monitoring
-
-SiteAegis uses **WebSockets** for real-time communication between the backend and frontend.
-
-This allows monitoring events to be delivered to connected dashboard clients without manually refreshing the page.
-
-WebSocket endpoint:
+# Architecture
 
 ```text
-ws://127.0.0.1:8000/ws
-````
-
-The WebSocket system supports:
-
-* Live monitoring updates
-* Event broadcasting
-* Connected-client management
-* Real-time dashboard updates
-
----
-
-## Alert Intelligence
-
-SiteAegis maintains alerts generated from monitoring changes.
-
-Alert types can include:
-
-* Security risk changes
-* Security findings
-* Website status changes
-* Finding resolution
-* Monitoring events
-
-Available endpoints:
-
-```text
-GET    /api/alerts
-GET    /api/alerts/unread
-GET    /api/alerts/count
-PATCH  /api/alerts/{alert_id}/read
-PATCH  /api/alerts/read-all
+                         SITEAEGIS
+                            │
+             ┌──────────────┴──────────────┐
+             │                             │
+             ▼                             ▼
+      WEB SECURITY                 CONSTRUCTION SAFETY
+       MONITORING                     INTELLIGENCE
+             │                             │
+             ▼                             ▼
+     Registered Websites             Camera / Image / Video
+             │                             │
+             ▼                             ▼
+    Website Security Engine          OpenCV + YOLO
+             │                             │
+     ┌───────┼────────┐                    ▼
+     │       │        │             Safety Detection
+     ▼       ▼        ▼                    │
+    SSL   Headers  Findings                ▼
+     │       │        │              Safety Analysis
+     └───────┼────────┘                    │
+             ▼                             │
+      Security Risk                        │
+         Engine                            │
+             │                             │
+             └──────────────┬──────────────┘
+                            ▼
+                    Risk & Event Engine
+                            │
+              ┌─────────────┼─────────────┐
+              ▼             ▼             ▼
+          Monitoring     Safety Events   Incidents
+            Events            │             │
+              │               ▼             │
+              └──────────► Alerts ◄────────┘
+                            │
+                 ┌──────────┴──────────┐
+                 ▼                     ▼
+             PostgreSQL          Redis / Memurai
+                 │                     │
+                 └──────────┬──────────┘
+                            ▼
+                    FastAPI REST API
+                            │
+                      WebSocket Layer
+                            │
+                            ▼
+                     Next.js Dashboard
 ```
 
 ---
 
-# Construction Safety Intelligence
+# Safety Intelligence Pipeline
 
-SiteAegis also includes a construction-site safety subsystem.
+Construction-site analysis follows an end-to-end computer-vision pipeline:
 
-It combines:
+```text
+Camera / Image / Video
+          ↓
+OpenCV Frame Processing
+          ↓
+YOLO Object Detection
+          ↓
+Person / PPE / Machine Detection
+          ↓
+Safety Rule Analysis
+          ↓
+Risk & Severity Classification
+          ↓
+Safety Event
+          ↓
+Alert / Incident
+          ↓
+PostgreSQL
+          ↓
+REST API + WebSocket
+          ↓
+Dashboard
+```
 
-* Camera management
-* Safety zones
-* PPE detection
-* Safety events
-* Risk classification
-* Incident management
-* Evidence-aware analysis
+This architecture allows detection results to move from raw visual input through analysis, persistence, real-time communication, and dashboard presentation.
 
 ---
 
-## YOLO-Based PPE Detection
+# Computer Vision
 
-The construction safety module uses **Ultralytics YOLO** for computer vision.
+SiteAegis uses **Ultralytics YOLO** and **OpenCV** for construction-site visual analysis.
 
-Supported detection classes include:
+The vision layer processes images and video frames and evaluates detected objects against configurable safety rules.
+
+## PPE Detection
+
+The configured computer-vision models support construction PPE-related detections including:
 
 * Person
 * Hardhat
-* No-hardhat
+* No hardhat
 * Safety vest
-* No-safety vest
-* Safety shoes
-* Gloves
-* Mask
-* No-mask
-* Safety net
-* Barricade
-* Dumpster
-* Excavator
-* Dump truck
-* Mini-van
-* Truck
-* Wheel loader
 
-PPE endpoint:
+PPE detections can be used as safety indicators and incorporated into the safety-event workflow.
+
+## Restricted-Zone Entry
+
+Construction areas can be configured as restricted safety zones.
+
+When a detected person enters a restricted area, SiteAegis can generate a safety event containing information such as:
+
+* Zone
+* Camera
+* Event type
+* Severity
+* Confidence
+* Risk score
+* Timestamp
+* Description
+
+## Worker-Machine Proximity
+
+The system analyzes the spatial relationship between detected workers and machinery.
+
+Bounding-box separation and configurable proximity thresholds are used to identify potentially unsafe worker-machine distances.
+
+## Crowding Detection
+
+Crowding detection evaluates the number of detected people against a configurable threshold.
+
+The live analysis system uses temporal state handling to avoid repeatedly generating identical events while a crowd condition remains continuously active.
+
+## Fall Detection
+
+Fall analysis evaluates person-detection geometry to identify fall-like body orientation.
+
+The current implementation provides frame/image-level fall detection. More advanced temporal fall recognition can be added as a future enhancement.
+
+## Unsafe Movement
+
+Unsafe movement analysis compares person positions between frames.
+
+Detected workers are matched between frames and their displacement is calculated. Significant movement can be classified as an unsafe movement event according to the configured analysis rules.
+
+---
+
+# Video Intelligence
+
+SiteAegis supports video analysis through the camera analysis API.
+
+Video is processed using OpenCV frame extraction and the computer-vision safety pipeline.
+
+The analysis can evaluate:
+
+* People
+* PPE
+* Crowding
+* Falls
+* Worker-machine proximity
+* Restricted zones
+* Unsafe movement
+
+Processed results are integrated with the safety-event and incident-management layers.
+
+---
+
+# Live Camera Monitoring
+
+SiteAegis supports background camera analysis.
+
+The live lifecycle is:
 
 ```text
+START
+  ↓
+RUNNING
+  ↓
+FRAME PROCESSING
+  ↓
+SAFETY ANALYSIS
+  ↓
+EVENT GENERATION
+  ↓
+WEBSOCKET BROADCAST
+  ↓
+STATUS MONITORING
+  ↓
+STOP
+  ↓
+OFFLINE
+```
+
+Live camera processing tracks:
+
+* Camera status
+* Frames read
+* Frames processed
+* Generated events
+* Last processed frame
+* Worker state
+* Processing errors
+
+Uploaded video can also be used as a controlled source for live-analysis testing.
+
+---
+
+# Real-Time WebSocket Monitoring
+
+SiteAegis provides a WebSocket endpoint:
+
+```text
+WS /ws
+```
+
+The WebSocket layer delivers real-time monitoring information to connected dashboard clients.
+
+Camera analysis messages can include:
+
+* Camera ID
+* Frame information
+* Person detections
+* PPE detections
+* Crowding analysis
+* Fall analysis
+* Proximity analysis
+* Unsafe movement analysis
+* Restricted-zone analysis
+
+Safety events can also be broadcast in real time.
+
+This allows the dashboard to receive live activity without relying exclusively on repeated polling requests.
+
+---
+
+# Risk Intelligence
+
+SiteAegis uses numerical risk scores and severity levels to communicate detected conditions.
+
+For web-security monitoring, the current risk classification is:
+
+|  Score | Risk Level |
+| -----: | ---------- |
+| 80–100 | Low        |
+|  60–79 | Medium     |
+|  40–59 | High       |
+|   0–39 | Critical   |
+
+Construction-safety events use event-specific severity and risk rules.
+
+High-risk conditions can be escalated into incidents, allowing the system to distinguish routine monitoring activity from conditions requiring attention.
+
+---
+
+# Safety Events
+
+Safety events provide structured records for construction-site conditions detected by the vision and safety engines.
+
+A safety event can contain:
+
+* Event type
+* Camera
+* Zone
+* Severity
+* Confidence
+* Risk score
+* Description
+* Timestamp
+* Active state
+
+Supported event categories include:
+
+```text
+restricted_zone_entry
+worker_machine_proximity
+crowding_detected
+fall_detected
+unsafe_movement
+```
+
+---
+
+# Incident Management
+
+High-risk safety conditions can be escalated into incidents.
+
+The incident-management layer provides structured tracking of safety conditions requiring attention.
+
+Incident information can include:
+
+* Safety event
+* Severity
+* Risk score
+* Description
+* Status
+* Timestamp
+
+This creates a response workflow from automated detection to operational follow-up.
+
+---
+
+# Alerts
+
+The alert layer provides centralized notification records for important monitoring conditions.
+
+Alerts can represent:
+
+* Security findings
+* Risk changes
+* Safety events
+* High-severity conditions
+* Incident-related activity
+
+The dashboard provides a centralized alert view with read/unread management.
+
+---
+
+# Dashboard
+
+The SiteAegis dashboard provides a unified operational view of both monitoring domains.
+
+## Web Security
+
+The dashboard presents:
+
+* Monitored websites
+* Online/offline status
+* Current risk
+* Security scans
+* SSL statistics
+* Security findings
+* Risk distribution
+* Monitoring activity
+* Alerts
+
+## Construction Safety
+
+The dashboard presents:
+
+* Cameras
+* Safety events
+* PPE activity
+* Restricted-zone activity
+* Worker-machine proximity
+* Crowding
+* Falls
+* Unsafe movement
+* Open incidents
+* Video intelligence
+
+## System Health
+
+The dashboard also exposes:
+
+* API health
+* Database status
+* Redis connectivity
+* WebSocket activity
+
+---
+
+# Data & Infrastructure
+
+## PostgreSQL
+
+PostgreSQL is the primary application database.
+
+Persistent application data includes:
+
+* Sites
+* Scans
+* Monitoring events
+* Alerts
+* Cameras
+* Zones
+* Safety events
+* Incidents
+
+The application was migrated from its earlier SQLite development configuration to PostgreSQL while preserving existing application data.
+
+## Redis / Memurai
+
+SiteAegis integrates Redis-compatible services through Memurai.
+
+Redis/Memurai is used for runtime caching and service-state support.
+
+The verified local configuration uses port `6380`.
+
+Sensitive credentials are maintained through environment configuration and are not stored in the repository.
+
+---
+
+# Technology Stack
+
+| Layer                   | Technology                 |
+| ----------------------- | -------------------------- |
+| Frontend                | Next.js, React, TypeScript |
+| Backend                 | Python, FastAPI            |
+| Database                | PostgreSQL                 |
+| Runtime Cache           | Redis / Memurai            |
+| ORM                     | SQLAlchemy                 |
+| Computer Vision         | OpenCV                     |
+| Object Detection        | Ultralytics YOLO           |
+| Image Processing        | Pillow                     |
+| Real-Time Communication | WebSockets                 |
+| Scheduling              | APScheduler                |
+| Application Server      | Uvicorn                    |
+
+---
+
+# API
+
+SiteAegis provides REST APIs for web monitoring, safety analysis, cameras, zones, incidents, alerts, and dashboard data.
+
+## Web Security
+
+```text
+POST /api/scan
+GET  /api/scan/history
+GET  /api/scan/{scan_id}
 POST /api/scan/ppe
 ```
 
-Example:
-
-```bash
-curl.exe -X POST "http://127.0.0.1:8000/api/scan/ppe" -F "file=@construction_test.jpg"
-```
-
----
-
-## Evidence-Aware Safety Logic
-
-SiteAegis is designed to avoid making unsafe assumptions when visual evidence is insufficient.
-
-For example, if an image does not contain enough worker evidence, the system can return:
+## Dashboard
 
 ```text
-INSUFFICIENT_EVIDENCE
+GET /api/dashboard/stats
 ```
 
-instead of incorrectly reporting:
+## Cameras
 
 ```text
-SAFE
+GET  /api/cameras
+POST /api/cameras
+
+POST /api/cameras/{camera_id}/analyze
+
+POST /api/cameras/{camera_id}/live/start
+POST /api/cameras/{camera_id}/live/stop
+GET  /api/cameras/{camera_id}/live/status
 ```
 
-This is important because:
-
-> No detected violation does not always mean that the scene is safe.
-
-The system therefore considers whether sufficient evidence exists before making strong safety conclusions.
-
----
-
-## Camera Management
-
-SiteAegis supports construction camera management.
-
-Available endpoints:
-
-```text
-GET    /api/cameras
-POST   /api/cameras
-GET    /api/cameras/{camera_id}
-PUT    /api/cameras/{camera_id}
-DELETE /api/cameras/{camera_id}
-```
-
-Camera information can include:
-
-* Camera name
-* Location
-* Source type
-* Active state
-* Camera status
-
----
-
-## Safety Zones
-
-The platform supports configurable construction safety zones.
-
-Examples include:
-
-* Main entrance
-* Crane area
-* Restricted areas
-* Equipment areas
-* Other monitored site sections
-
-Endpoints:
+## Zones
 
 ```text
 GET    /api/zones
@@ -269,228 +501,42 @@ PUT    /api/zones/{zone_id}
 DELETE /api/zones/{zone_id}
 ```
 
----
-
-## Safety Events
-
-Detected or manually recorded safety conditions are stored as safety events.
-
-Examples include:
-
-* Helmet violations
-* No safety vest
-* Fire hazards
-* Other safety conditions
-
-Endpoints:
+## Safety
 
 ```text
-GET    /api/safety/events
-POST   /api/safety/events
-GET    /api/safety/events/{event_id}
-PUT    /api/safety/events/{event_id}
-DELETE /api/safety/events/{event_id}
+GET  /api/safety
+POST /api/safety
+
+GET    /api/safety/{event_id}
+PUT    /api/safety/{event_id}
+DELETE /api/safety/{event_id}
+
+POST /api/safety/proximity/analyze
+POST /api/safety/crowding/analyze
+POST /api/safety/fall/analyze
+POST /api/safety/unsafe-movement/analyze
+
+GET /api/safety/events
 ```
 
-Safety events can contain:
-
-* Event type
-* Severity
-* Risk score
-* Confidence
-* Active state
-* Camera/source
-* Site information
-
----
-
-## Incident Management
-
-High-risk safety events can be represented through the incident management system.
-
-Endpoints:
+## Incidents
 
 ```text
-GET    /api/incidents
-POST   /api/incidents
-GET    /api/incidents/{incident_id}
-PUT    /api/incidents/{incident_id}
-DELETE /api/incidents/{incident_id}
+GET  /api/incidents
+POST /api/incidents
 ```
 
-The incident service also includes risk-based handling and duplicate-prevention logic.
-
----
-
-## Dashboard
-
-The SiteAegis dashboard provides a centralized view of the system.
-
-It can display:
-
-* Monitored websites
-* Online websites
-* Current security score
-* Alerts
-* Monitoring activity
-* Latest monitored target
-* WebSocket connection status
-* Security events
-
-The dashboard is designed to quickly answer:
-
-**What is being monitored?**
-
-**What changed?**
-
-**What needs attention?**
-
----
-
-# Architecture
+## Alerts
 
 ```text
-                  +----------------------+
-                  |   Next.js Frontend   |
-                  |      Dashboard       |
-                  +----------+-----------+
-                             |
-                     REST + WebSocket
-                             |
-                  +----------v-----------+
-                  |    FastAPI Backend   |
-                  |                      |
-                  | API Routes           |
-                  | Monitoring Services  |
-                  | Security Analysis    |
-                  | Alert System         |
-                  | Safety Services      |
-                  | Vision Service       |
-                  +----------+-----------+
-                             |
-              +--------------+--------------+
-              |              |              |
-       +------v------+ +-----v------+ +-----v------+
-       |   SQLite   | |    YOLO    | | WebSocket  |
-       |  Database  | |   Vision   | |   Manager  |
-       +-------------+ +------------+ +------------+
+GET   /api/alerts
+PATCH /api/alerts/read-all
 ```
 
----
-
-# Backend Architecture
+## Health
 
 ```text
-backend/
-└── app/
-    ├── api/
-    │   ├── alerts.py
-    │   ├── cameras.py
-    │   ├── dashboard.py
-    │   ├── health.py
-    │   ├── incidents.py
-    │   ├── routes.py
-    │   ├── safety.py
-    │   ├── sites.py
-    │   └── zones.py
-    │
-    ├── core/
-    │   ├── config.py
-    │   ├── database.py
-    │   └── security.py
-    │
-    ├── models/
-    │
-    ├── schemas/
-    │
-    ├── services/
-    │   ├── alert_service.py
-    │   ├── incident_service.py
-    │   ├── monitoring_events.py
-    │   ├── monitoring_scheduler.py
-    │   ├── monitoring_service.py
-    │   ├── safety_service.py
-    │   ├── site_service.py
-    │   └── vision_service.py
-    │
-    ├── websocket/
-    │   └── manager.py
-    │
-    └── main.py
-```
-
----
-
-# Technology Stack
-
-## Frontend
-
-* Next.js
-* React
-* TypeScript
-* CSS
-* Responsive UI
-* WebSocket Client
-
-## Backend
-
-* Python
-* FastAPI
-* Uvicorn
-* Pydantic
-* SQLAlchemy
-* SQLite
-* APScheduler
-
-## Computer Vision
-
-* Ultralytics YOLO
-* Pillow
-
-## Communication
-
-* REST APIs
-* WebSockets
-
----
-
-# API Reference
-
-## Website Scanning
-
-```text
-POST /api/scan
-GET  /api/scan/history
-GET  /api/scan/{scan_id}
-```
-
-## Dashboard
-
-```text
-GET /api/dashboard/stats
-```
-
-## Sites
-
-```text
-GET    /api/sites
-POST   /api/sites
-GET    /api/sites/{site_id}
-PUT    /api/sites/{site_id}
-DELETE /api/sites/{site_id}
-
-POST   /api/sites/{site_id}/scan
-GET    /api/sites/{site_id}/scans
-GET    /api/sites/{site_id}/findings
-GET    /api/sites/{site_id}/scans/{scan_id}/findings
-GET    /api/sites/{site_id}/trend
-GET    /api/sites/{site_id}/events
-```
-
-## PPE
-
-```text
-POST /api/scan/ppe
+GET /api/health
 ```
 
 ## WebSocket
@@ -501,254 +547,365 @@ WS /ws
 
 ---
 
-# Local Development
+# Verification & Testing
 
-## Clone Repository
+SiteAegis was validated through direct functional and integration testing.
 
-```bash
-git clone https://github.com/AtiyaQazi/SiteAegis.git
-cd SiteAegis
-```
+Testing covered computer-vision detection, video processing, live camera operation, WebSocket communication, database persistence, dashboard integration, infrastructure services, scheduler behavior, frontend builds, and web-security regression.
 
-## Backend Setup
+## Construction Safety Verification
 
-```powershell
-cd backend
+| Capability               | Evidence                            | Result |
+| ------------------------ | ----------------------------------- | ------ |
+| PPE Detection            | YOLO object detection               | PASS   |
+| Restricted-Zone Entry    | Safety Event #1167                  | PASS   |
+| Worker-Machine Proximity | Safety Event #1158                  | PASS   |
+| Crowding Detection       | Safety Event #1287                  | PASS   |
+| Fall Detection           | Safety Event #1160                  | PASS   |
+| Unsafe Movement          | Safety Events #1164 / #1166         | PASS   |
+| Video Analysis           | 10-frame video test                 | PASS   |
+| Live Camera Analysis     | Continuous background processing    | PASS   |
+| WebSocket Camera Stream  | `camera_analysis_frame` messages    | PASS   |
+| WebSocket Safety Event   | Safety Event #1250                  | PASS   |
+| PostgreSQL Persistence   | Safety events retrieved through API | PASS   |
+| Incident Management      | High-risk safety events             | PASS   |
 
-python -m venv venv
+---
 
-.\venv\Scripts\Activate.ps1
+# Selected Test Evidence
 
-pip install -r requirements.txt
-```
-
-Run backend:
-
-```powershell
-uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-Backend:
-
-```text
-http://127.0.0.1:8000
-```
-
-Swagger API documentation:
+## Restricted-Zone Entry
 
 ```text
-http://127.0.0.1:8000/docs
+Safety Event #1167
+
+Event Type:  restricted_zone_entry
+Zone:        Crane Area
+Camera:      1
+Severity:    Critical
+Confidence:  0.815
+Risk Score:  95
 ```
 
-## Frontend Setup
+The event was successfully created and persisted through the safety-event pipeline.
 
-Open another terminal:
-
-```powershell
-cd frontend
-
-npm install
-
-npm run dev
-```
-
-Frontend:
+## Worker-Machine Proximity
 
 ```text
-http://localhost:3000
+Safety Event #1158
+
+Event Type:  worker_machine_proximity
+Machine:     Excavators
+Severity:    Medium
+Risk Score:  60
+Gap:         86.03 pixels
+Threshold:   120 pixels
+```
+
+The detection demonstrated that the configured spatial threshold can identify a worker-machine proximity condition.
+
+## Fall Detection
+
+```text
+Safety Event #1160
+
+Event Type:  fall_detected
+Severity:    Critical
+Risk Score:  95
+```
+
+The dedicated fall test successfully produced a critical safety event.
+
+## Crowding Detection
+
+The final live looping-video test produced:
+
+```text
+Frames Read:       980
+Frames Processed:  980
+Events Created:    1
+Worker Shutdown:   Clean
+Last Error:        None
+```
+
+This test verified continuous crowd-state handling and duplicate-event suppression.
+
+## Unsafe Movement
+
+```text
+Safety Event #1164
+
+Unsafe Movements: 2
+Displacements:     approximately 511 px and 642 px
+Severity:          Critical
+Risk Score:        95
+```
+
+A separate video integration test generated Safety Event **#1166** for unsafe movement.
+
+---
+
+# Video Integration Verification
+
+A construction video containing 10 frames was processed through the camera analysis API.
+
+```text
+FPS:              5
+Total Frames:     10
+Frames Processed: 2
+Frame Interval:   5
+Resolution:       902 × 1536
+```
+
+The sampled frames were processed through the safety-analysis pipeline.
+
+Verified results included:
+
+* Person detection
+* Crowding detection
+* Unsafe movement detection
+* Restricted-zone evaluation
+
+Generated events included:
+
+```text
+#1165 — crowding_detected
+#1166 — unsafe_movement
+```
+
+This verified the flow from video input through safety analysis and event persistence.
+
+---
+
+# Live Camera Verification
+
+The live camera pipeline was tested from startup through shutdown.
+
+Verified behavior included:
+
+* Camera successfully entered running state
+* Background processing worker started
+* Frames were continuously processed
+* Safety analysis was executed
+* Events were generated
+* WebSocket messages were delivered
+* Camera status was queryable
+* No processing error occurred
+* Worker stopped cleanly
+
+The final lifecycle verification was:
+
+```text
+START → PROCESS → ANALYZE → BROADCAST → STATUS → STOP
 ```
 
 ---
 
-# Database
+# WebSocket Verification
 
-SiteAegis currently uses **SQLite** with SQLAlchemy.
-
-The local database is intentionally excluded from Git version control.
+An independent WebSocket client connected successfully to:
 
 ```text
-siteaegis.db
+ws://127.0.0.1:8000/ws
+```
+
+The test received `camera_analysis_frame` messages containing live analysis information.
+
+Verified information included:
+
+* 5 detected persons
+* 2 hardhat detections
+* Crowding analysis
+* Fall analysis
+* Proximity analysis
+* Unsafe movement analysis
+* Restricted-zone analysis
+
+A `camera_safety_event` message was also captured for Safety Event **#1250**.
+
+---
+
+# Web Security Regression
+
+The existing web-security monitoring functionality was regression-tested after construction-safety integration.
+
+Final scan:
+
+```text
+Scan ID:       2468
+Target:        https://example.com
+Availability:  Online
+HTTP Status:   200
+SSL:           Valid
+Risk Score:    65
+Risk Level:    Medium
+Findings:      6
+```
+
+This verified that the construction-safety additions did not break the original web-security monitoring pipeline.
+
+---
+
+# Scheduler Verification
+
+The automated monitoring scheduler was tested with registered websites.
+
+A successful monitoring cycle produced:
+
+```text
+Google
+Risk Score: 70
+Risk Level: medium
+
+Test Monitoring
+Risk Score: 65
+Risk Level: medium
+```
+
+The scheduler completed successfully and persisted the correct risk-level values.
+
+---
+
+# Reliability & Integration Validation
+
+The major processing chain was verified end-to-end:
+
+```text
+Input
+  ↓
+Detection
+  ↓
+Analysis
+  ↓
+Risk Classification
+  ↓
+Event Creation
+  ↓
+PostgreSQL Persistence
+  ↓
+REST API
+  ↓
+WebSocket
+  ↓
+Dashboard
+```
+
+This confirms that the construction-safety modules are integrated into the application's analysis, persistence, API, real-time communication, and dashboard layers.
+
+---
+
+# Application Health
+
+The final health verification returned:
+
+```text
+Application: SiteAegis
+Version:     1.0.0
+Status:      healthy
+Redis:       connected
+```
+
+The application version was also verified against OpenAPI metadata:
+
+```text
+Health Version:  1.0.0
+OpenAPI Version: 1.0.0
 ```
 
 ---
 
-# Testing
+# Frontend Validation
 
-The backend has been tested across the main API modules.
-
-### Backend Smoke Tests
-
-The following were tested successfully:
-
-* Root endpoint
-* Health endpoint
-* Sites
-* Dashboard
-* Alerts
-* Alert count
-* Cameras
-* Zones
-* Safety events
-* Incidents
-
-Result:
+The Next.js frontend was successfully validated using:
 
 ```text
-Passed: 10
-Failed: 0
-
-RESULT: ALL BACKEND SMOKE TESTS PASSED
+npm run build
 ```
 
-### WebSocket Test
+The production build completed successfully through:
 
-```text
-State: Open
-RESULT: PASS
-```
-
-### PPE Model Test
-
-The YOLO PPE model was tested successfully.
-
-Example detections:
-
-```text
-hardhat: 0.91
-hardhat: 0.83
-```
-
-The system also correctly handled insufficient worker evidence instead of incorrectly classifying the scene as safe.
+* Compilation
+* TypeScript validation
+* Page data collection
+* Static generation
+* Final optimization
 
 ---
 
-# Engineering Approach
+# Repository Verification
 
-SiteAegis was designed around several practical engineering principles.
+The final implementation was committed and synchronized with GitHub.
 
-### Separation of Responsibilities
+```text
+Branch:         main
+Latest Commit:  aa969a2
+Commit:         Complete SiteAegis safety and monitoring platform
+Remote:         origin/main
+Working Tree:   Clean
+```
 
-API routes, services, database models, schemas, monitoring logic, and WebSocket management are separated into dedicated modules.
+The repository was checked to ensure that sensitive and generated files were excluded from version control.
 
-### Evidence-Aware Decisions
+Excluded categories include:
 
-Safety conclusions should be based on sufficient evidence rather than assuming that an undetected condition is automatically safe.
-
-### Continuous Monitoring
-
-Scheduled monitoring allows the platform to detect changes over time.
-
-### Real-Time Communication
-
-WebSockets provide live communication between backend monitoring services and the frontend dashboard.
-
-### Persistent History
-
-Scan and event information is stored for historical analysis and comparison.
-
-### Extensibility
-
-The architecture allows additional monitoring sources, analytics, notifications, and computer-vision capabilities to be added later.
+* Environment files
+* Local databases
+* Virtual environments
+* Node modules
+* Model weights
+* Generated uploads
+* Test media
+* Python cache files
 
 ---
 
 # Future Enhancements
 
-Possible future improvements include:
+Potential future extensions include:
 
-* Live RTSP/IP camera streams
-* Real-time video PPE monitoring
-* Object tracking
-* Zone-based detection rules
-* Email notifications
-* Push notifications
-* Advanced security-header analysis
-* DNS intelligence
-* Domain intelligence
-* Vulnerability intelligence
-* Authentication
-* Role-based access control
-* Multi-user dashboards
+* RTSP/IP camera sources
+* Multi-camera distributed processing
+* Advanced worker and object tracking
+* Temporal fall detection
+* Improved model evaluation and calibration
+* Site-specific computer-vision models
+* Authentication and role-based access control
+* Email, SMS, and push notifications
 * Cloud deployment
-* Background task queues
-* Advanced security analytics
-* Historical safety analytics
+* Distributed processing
+* Advanced safety analytics
+* Historical safety trends
+* Automated compliance reporting
 * Explainable AI safety reports
-* Improved model confidence calibration
-* Automated incident workflows
+
+These represent potential future extensions to the current implementation.
 
 ---
 
-# Why I Built SiteAegis
+# Project Summary
 
-SiteAegis is a **self-directed personal learning and engineering project** created to explore the combination of:
-
-* Full-stack development
-* Web security
-* Automation
-* Real-time systems
-* REST APIs
-* WebSockets
-* Databases
-* Computer vision
-* AI-assisted safety analysis
-
-The project focuses on building a complete workflow instead of isolated features:
+SiteAegis combines:
 
 ```text
-Observe
-   ↓
-Collect
-   ↓
-Analyze
-   ↓
-Detect
-   ↓
-Evaluate
-   ↓
-Alert
-   ↓
-Respond
+Web Security
+      +
+Computer Vision
+      +
+Construction Safety
+      +
+Risk Intelligence
+      +
+Event Management
+      +
+PostgreSQL
+      +
+Redis
+      +
+WebSockets
+      +
+Real-Time Dashboard
 ```
 
-This project provided hands-on experience with backend architecture, frontend integration, monitoring systems, real-time communication, database design, scheduling, computer vision, and practical system testing.
+The platform provides a unified approach to monitoring digital assets and construction-site safety conditions through automated analysis, structured events, risk assessment, alerts, incidents, persistent records, and real-time visualization.
 
----
-
-# Repository Structure
-
-```text
-SiteAegis/
-│
-├── backend/
-│   ├── app/
-│   ├── requirements.txt
-│   └── ...
-│
-├── frontend/
-│   ├── app/
-│   ├── package.json
-│   └── ...
-│
-├── .gitignore
-└── README.md
-```
-
----
-
-# Disclaimer
-
-SiteAegis is a personal learning and engineering project.
-
-Security scores, monitoring results, and computer-vision detections should be treated as technical indicators rather than guarantees of security or physical safety.
-
-Real-world deployment would require additional validation, security hardening, model evaluation, infrastructure controls, and operational procedures.
-
----
-
-# SiteAegis
-
-**Observe. Detect. Respond.**
-
-**Web Security × Real-Time Monitoring × Computer Vision × Construction Safety**
-
+**SiteAegis — Observe. Detect. Assess. Respond.**
