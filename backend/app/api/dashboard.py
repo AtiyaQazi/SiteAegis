@@ -1,11 +1,12 @@
 from collections import Counter
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models import Scan
+from app.models import Scan, Site
 
 
 router = APIRouter(
@@ -31,26 +32,57 @@ def dashboard_stats(
     total_scans = len(scans)
 
     # ========================================================
-    # OVERVIEW
+    # MONITORED SITE STATUS
+    # ========================================================
+    #
+    # IMPORTANT:
+    # online_sites / offline_sites must count DISTINCT
+    # monitored sites, not individual scan records.
+    #
+    # Each Site stores its latest monitoring state in:
+    #   - last_status
+    #   - last_scan_id
+    #
+    # This prevents values such as:
+    #   online_sites = 1343
+    #   offline_sites = 6
+    #
+    # when there are actually only 2 monitored sites.
     # ========================================================
 
+    sites = (
+        db.query(Site)
+        .filter(
+            Site.monitoring_enabled.is_(True)
+        )
+        .all()
+    )
+
     online_sites = sum(
-        1 for scan in scans
-        if scan.status == "online"
+        1
+        for site in sites
+        if site.last_status == "online"
     )
 
     offline_sites = sum(
-        1 for scan in scans
-        if scan.status != "online"
+        1
+        for site in sites
+        if site.last_status != "online"
     )
 
+    # ========================================================
+    # SCAN-BASED OVERVIEW
+    # ========================================================
+
     ssl_valid_scans = sum(
-        1 for scan in scans
+        1
+        for scan in scans
         if scan.ssl_valid
     )
 
     ssl_invalid_scans = sum(
-        1 for scan in scans
+        1
+        for scan in scans
         if not scan.ssl_valid
     )
 
@@ -101,6 +133,9 @@ def dashboard_stats(
 
     for scan in scans:
 
+        if not scan.risk_level:
+            continue
+
         risk_level = scan.risk_level.lower()
 
         if risk_level in risk_distribution:
@@ -123,7 +158,6 @@ def dashboard_stats(
             continue
 
         try:
-            import json
 
             counts = json.loads(
                 scan.severity_counts
@@ -157,7 +191,6 @@ def dashboard_stats(
             continue
 
         try:
-            import json
 
             missing = json.loads(
                 scan.missing_headers
@@ -238,20 +271,27 @@ def dashboard_stats(
     return {
         "overview": {
             "total_scans": total_scans,
+
+            # These two values represent DISTINCT
+            # currently monitored sites.
             "online_sites": online_sites,
             "offline_sites": offline_sites,
+
             "average_risk_score": round(
                 average_risk_score,
                 2,
             ),
+
             "average_response_time_ms": round(
                 average_response_time_ms,
                 2,
             ),
+
             "average_security_headers_score": round(
                 average_security_headers_score,
                 2,
             ),
+
             "ssl_valid_scans": ssl_valid_scans,
             "ssl_invalid_scans": ssl_invalid_scans,
         },

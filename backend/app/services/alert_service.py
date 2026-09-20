@@ -10,6 +10,10 @@ def create_alert_from_event(
 ) -> Alert:
     """
     Create a user-facing alert from a monitoring event.
+
+    The monitoring event must already have a database ID
+    before the alert is created so the foreign-key
+    relationship is stored correctly.
     """
 
     alert = Alert(
@@ -33,9 +37,34 @@ def create_alerts_from_events(
 ) -> list[Alert]:
     """
     Convert multiple monitoring events into alerts.
+
+    MonitoringEvent objects are flushed first so SQLAlchemy
+    assigns their database IDs before those IDs are used as
+    Alert.event_id foreign keys.
     """
 
     alerts: list[Alert] = []
+
+    if not events:
+        return alerts
+
+    # --------------------------------------------------
+    # ENSURE MONITORING EVENT IDS EXIST
+    # --------------------------------------------------
+    #
+    # detect_scan_changes() adds MonitoringEvent objects
+    # to the current SQLAlchemy session. Their primary keys
+    # may still be None until the session is flushed.
+    #
+    # Alert.event_id depends on those IDs, so flush the
+    # pending monitoring events before creating alerts.
+    # --------------------------------------------------
+
+    db.flush()
+
+    # --------------------------------------------------
+    # CREATE ALERTS
+    # --------------------------------------------------
 
     for event in events:
         alert = create_alert_from_event(

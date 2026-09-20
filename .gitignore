@@ -45,3 +45,15 @@ backend/models/*.pt
 # Temporary dependency backups
 backend/requirements.*-backup.txt
 backend/requirements.before-cleanup.txt
+
+# SiteAegis generated video uploads
+backend/uploads/
+
+# Local test media
+backend/*_test_video.mp4
+backend/fall_test_generated.png
+backend/movement_current.jpg
+backend/movement_previous.jpg
+
+# Local backup copies
+backend/app/services/*_backup.py

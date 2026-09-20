@@ -7,6 +7,7 @@ from app.models.camera import Camera
 from app.models.zone import Zone
 from app.models.safety_event import SafetyEvent
 from app.models.incident import Incident
+from app.models.zone_presence import ZonePresence
 
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "Zone",
     "SafetyEvent",
     "Incident",
+    "ZonePresence",
 ]

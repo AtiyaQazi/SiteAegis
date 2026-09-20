@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     PORT: int = 8000
 
+    DATABASE_URL: str = "sqlite:///./siteaegis.db"
+    REDIS_URL: str = "redis://127.0.0.1:6379/0"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -68,6 +68,7 @@ type Activity = {
   severity: string;
   site: string;
   timestamp: string;
+  source?: string;
 };
 
 type AlertFilter =
@@ -77,6 +78,218 @@ type AlertFilter =
   | "status"
   | "security";
 
+type Camera = {
+  id: number | string;
+  name: string;
+  location?: string | null;
+  description?: string | null;
+  source_type?: string | null;
+  source_url?: string | null;
+  is_active?: boolean;
+  status?: string | null;
+};
+
+type SafetyEvent = {
+  id: number | string;
+  event_type?: string | null;
+  title?: string | null;
+  description?: string | null;
+  severity?: string | null;
+  risk_score?: number | null;
+  confidence?: number | null;
+  camera_id?: number | string | null;
+  zone_id?: number | string | null;
+  is_active?: boolean;
+  created_at?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+type Incident = {
+  id: number | string;
+  incident_type?: string | null;
+  title?: string | null;
+  description?: string | null;
+  severity?: string | null;
+  risk_score?: number | null;
+  status?: string | null;
+  event_id?: number | string | null;
+  camera_id?: number | string | null;
+  zone_id?: number | string | null;
+  created_at?: string | null;
+};
+
+type Zone = {
+  id: number | string;
+  name: string;
+  location?: string | null;
+  description?: string | null;
+  risk_level?: string | null;
+  is_active?: boolean;
+  polygon?: unknown;
+};
+
+type HealthState = {
+  status: string;
+  app?: string;
+  version?: string;
+  services?: {
+    redis?: string;
+    [key: string]: unknown;
+  };
+};
+
+type SafetyCategory = {
+  key: string;
+  label: string;
+  shortLabel: string;
+  count: number;
+  severity: string;
+};
+
+type LiveCameraState = {
+  cameraId: number | string;
+  status?: string;
+  thread_alive?: boolean;
+  frames_read?: number;
+  frames_processed?: number;
+  events_created?: number;
+  last_error?: string | null;
+};
+
+type SafetyLiveMessage = {
+  type?: string;
+  timestamp?: string;
+  camera_id?: number | string;
+  camera_name?: string;
+  event?: SafetyEvent;
+  analysis?: Record<string, unknown>;
+  status?: string;
+  message?: string;
+};
+
+function extractArray<T>(data: unknown): T[] {
+  if (Array.isArray(data)) {
+    return data as T[];
+  }
+
+  if (data && typeof data === "object") {
+    const object = data as Record<string, unknown>;
+
+    const candidates = [
+      object.items,
+      object.results,
+      object.data,
+      object.events,
+      object.incidents,
+      object.cameras,
+      object.zones,
+    ];
+
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) {
+        return candidate as T[];
+      }
+    }
+  }
+
+  return [];
+}
+
+function normalizeSafetyEvent(
+  item: unknown,
+  index: number,
+): SafetyEvent {
+  const value =
+    item && typeof item === "object"
+      ? (item as Record<string, unknown>)
+      : {};
+
+  return {
+    id: (value.id ??
+      value.event_id ??
+      `safety-${index}`) as number | string,
+    event_type: (value.event_type ??
+      value.type ??
+      null) as string | null,
+    title: (value.title ??
+      value.name ??
+      null) as string | null,
+    description: (value.description ??
+      value.message ??
+      null) as string | null,
+    severity: (value.severity ??
+      value.risk_level ??
+      null) as string | null,
+    risk_score:
+      typeof value.risk_score === "number"
+        ? value.risk_score
+        : null,
+    confidence:
+      typeof value.confidence === "number"
+        ? value.confidence
+        : null,
+    camera_id: (value.camera_id ??
+      null) as number | string | null,
+    zone_id: (value.zone_id ??
+      null) as number | string | null,
+    is_active:
+      typeof value.is_active === "boolean"
+        ? value.is_active
+        : true,
+    created_at: (value.created_at ??
+      value.timestamp ??
+      null) as string | null,
+    metadata:
+      value.metadata &&
+      typeof value.metadata === "object"
+        ? (value.metadata as Record<string, unknown>)
+        : null,
+  };
+}
+
+function normalizeIncident(
+  item: unknown,
+  index: number,
+): Incident {
+  const value =
+    item && typeof item === "object"
+      ? (item as Record<string, unknown>)
+      : {};
+
+  return {
+    id: (value.id ??
+      value.incident_id ??
+      `incident-${index}`) as number | string,
+    incident_type: (value.incident_type ??
+      value.type ??
+      null) as string | null,
+    title: (value.title ??
+      value.name ??
+      null) as string | null,
+    description: (value.description ??
+      value.message ??
+      null) as string | null,
+    severity: (value.severity ??
+      value.risk_level ??
+      null) as string | null,
+    risk_score:
+      typeof value.risk_score === "number"
+        ? value.risk_score
+        : null,
+    status: (value.status ??
+      null) as string | null,
+    event_id: (value.event_id ??
+      null) as number | string | null,
+    camera_id: (value.camera_id ??
+      null) as number | string | null,
+    zone_id: (value.zone_id ??
+      null) as number | string | null,
+    created_at: (value.created_at ??
+      value.timestamp ??
+      null) as string | null,
+  };
+}
+
 export default function Home() {
   const [connected, setConnected] = useState(false);
 
@@ -85,22 +298,17 @@ export default function Home() {
   const [lastUpdate, setLastUpdate] =
     useState<MonitoringUpdate | null>(null);
 
-  const [loadingSites, setLoadingSites] =
-    useState(true);
-
+  const [loadingSites, setLoadingSites] = useState(true);
   const [sitesError, setSitesError] =
     useState<string | null>(null);
-
   const [retryingSites, setRetryingSites] =
     useState(false);
 
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [alertsLoading, setAlertsLoading] =
     useState(true);
-
   const [alertsError, setAlertsError] =
     useState<string | null>(null);
-
   const [retryingAlerts, setRetryingAlerts] =
     useState(false);
 
@@ -119,18 +327,79 @@ export default function Home() {
   const [alertFilter, setAlertFilter] =
     useState<AlertFilter>("all");
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const [cameras, setCameras] =
+    useState<Camera[]>([]);
+
+  const [zones, setZones] =
+    useState<Zone[]>([]);
+
+  const [safetyEvents, setSafetyEvents] =
+    useState<SafetyEvent[]>([]);
+
+  const [incidents, setIncidents] =
+    useState<Incident[]>([]);
+
+  const [health, setHealth] =
+    useState<HealthState | null>(null);
+
+  const [safetyLoading, setSafetyLoading] =
+    useState(true);
+
+  const [safetyRefreshing, setSafetyRefreshing] =
+    useState(false);
+
+  const [safetyError, setSafetyError] =
+    useState<string | null>(null);
+
+  const [liveCameraStates, setLiveCameraStates] =
+    useState<Record<string, LiveCameraState>>({});
+
+  const [cameraActionId, setCameraActionId] =
+    useState<string | null>(null);
+
+  const [safetyActivity, setSafetyActivity] =
+    useState<Activity[]>([]);
+
+  const wsRef =
+    useRef<WebSocket | null>(null);
 
   const reconnectTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(
       null,
     );
 
-  /*
-  ============================================================
-  LOAD REGISTERED SITES
-  ============================================================
-  */
+  async function fetchJson(
+    path: string,
+  ): Promise<unknown> {
+    const response = await fetch(
+      `${API_URL}${path}`,
+      {
+        cache: "no-store",
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `${path} returned ${response.status}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async function fetchOptional(
+    paths: string[],
+  ): Promise<unknown | null> {
+    for (const path of paths) {
+      try {
+        return await fetchJson(path);
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  }
 
   async function loadSites(
     isRetry = false,
@@ -144,28 +413,13 @@ export default function Home() {
     setSitesError(null);
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/sites`,
-        {
-          cache: "no-store",
-        },
-      );
+      const data =
+        await fetchJson("/api/sites");
 
-      if (!response.ok) {
-        throw new Error(
-          `Sites request failed: ${response.status}`,
-        );
-      }
+      const siteList =
+        extractArray<Site>(data);
 
-      const data = await response.json();
-
-      if (!Array.isArray(data)) {
-        throw new Error(
-          "Invalid sites response received from backend.",
-        );
-      }
-
-      setSites(data);
+      setSites(siteList);
     } catch (error) {
       console.error(
         "Failed to load sites:",
@@ -182,28 +436,8 @@ export default function Home() {
   }
 
   useEffect(() => {
-    let active = true;
-
-    async function initialLoad() {
-      if (!active) {
-        return;
-      }
-
-      await loadSites();
-    }
-
-    initialLoad();
-
-    return () => {
-      active = false;
-    };
+    loadSites();
   }, []);
-
-  /*
-  ============================================================
-  LOAD ALERTS
-  ============================================================
-  */
 
   async function loadAlerts(
     isRetry = false,
@@ -217,54 +451,38 @@ export default function Home() {
     setAlertsError(null);
 
     try {
-      const alertsResponse = await fetch(
-        `${API_URL}/api/alerts?limit=50`,
-        {
-          cache: "no-store",
-        },
-      );
-
-      if (!alertsResponse.ok) {
-        throw new Error(
-          `Alerts request failed: ${alertsResponse.status}`,
-        );
-      }
-
       const alertsData =
-        await alertsResponse.json();
-
-      if (!Array.isArray(alertsData)) {
-        throw new Error(
-          "Invalid alerts response received from backend.",
+        await fetchJson(
+          "/api/alerts?limit=50",
         );
-      }
 
-      const countResponse = await fetch(
-        `${API_URL}/api/alerts/count`,
-        {
-          cache: "no-store",
-        },
-      );
-
-      if (!countResponse.ok) {
-        throw new Error(
-          `Alert count request failed: ${countResponse.status}`,
+      const alertsList =
+        extractArray<Alert>(
+          alertsData,
         );
-      }
 
       const countData =
-        await countResponse.json();
+        await fetchJson(
+          "/api/alerts/count",
+        );
 
-      setAlerts(alertsData);
+      setAlerts(alertsList);
 
       if (
         countData &&
-        typeof countData.unread ===
-          "number"
+        typeof countData === "object"
       ) {
-        setUnreadAlertCount(
-          countData.unread,
-        );
+        const countObject =
+          countData as Record<string, unknown>;
+
+        if (
+          typeof countObject.unread ===
+          "number"
+        ) {
+          setUnreadAlertCount(
+            countObject.unread,
+          );
+        }
       }
     } catch (error) {
       console.error(
@@ -285,11 +503,350 @@ export default function Home() {
     loadAlerts();
   }, []);
 
-  /*
-  ============================================================
-  MARK SINGLE ALERT AS READ
-  ============================================================
-  */
+  async function loadSafetyDashboard(
+    showLoading = false,
+  ) {
+    if (showLoading) {
+      setSafetyLoading(true);
+    } else {
+      setSafetyRefreshing(true);
+    }
+
+    setSafetyError(null);
+
+    try {
+      const [
+        camerasData,
+        zonesData,
+        safetyData,
+        incidentsData,
+        healthData,
+      ] = await Promise.all([
+        fetchOptional([
+          "/api/cameras",
+        ]),
+        fetchOptional([
+          "/api/zones",
+        ]),
+        fetchOptional([
+          "/api/safety/events?limit=100",
+          "/api/safety/events",
+          "/api/safety?limit=100",
+        ]),
+        fetchOptional([
+          "/api/incidents?limit=100",
+          "/api/incidents",
+        ]),
+        fetchOptional([
+          "/api/health",
+        ]),
+      ]);
+
+      if (camerasData !== null) {
+        setCameras(
+          extractArray<Camera>(
+            camerasData,
+          ),
+        );
+      }
+
+      if (zonesData !== null) {
+        setZones(
+          extractArray<Zone>(
+            zonesData,
+          ),
+        );
+      }
+
+      if (safetyData !== null) {
+        const rawEvents =
+          extractArray<unknown>(
+            safetyData,
+          );
+
+        const normalizedEvents =
+          rawEvents.map(
+            normalizeSafetyEvent,
+          );
+
+        normalizedEvents.sort(
+          (a, b) => {
+            const aTime =
+              a.created_at
+                ? new Date(
+                    a.created_at,
+                  ).getTime()
+                : 0;
+
+            const bTime =
+              b.created_at
+                ? new Date(
+                    b.created_at,
+                  ).getTime()
+                : 0;
+
+            return bTime - aTime;
+          },
+        );
+
+        setSafetyEvents(
+          normalizedEvents.slice(
+            0,
+            100,
+          ),
+        );
+      }
+
+      if (incidentsData !== null) {
+        const rawIncidents =
+          extractArray<unknown>(
+            incidentsData,
+          );
+
+        const normalizedIncidents =
+          rawIncidents.map(
+            normalizeIncident,
+          );
+
+        normalizedIncidents.sort(
+          (a, b) => {
+            const aTime =
+              a.created_at
+                ? new Date(
+                    a.created_at,
+                  ).getTime()
+                : 0;
+
+            const bTime =
+              b.created_at
+                ? new Date(
+                    b.created_at,
+                  ).getTime()
+                : 0;
+
+            return bTime - aTime;
+          },
+        );
+
+        setIncidents(
+          normalizedIncidents.slice(
+            0,
+            100,
+          ),
+        );
+      }
+
+      if (healthData !== null) {
+        setHealth(
+          healthData as HealthState,
+        );
+      }
+
+      if (
+        camerasData === null &&
+        zonesData === null &&
+        safetyData === null &&
+        incidentsData === null
+      ) {
+        throw new Error(
+          "Safety API endpoints are unavailable.",
+        );
+      }
+    } catch (error) {
+      console.error(
+        "Failed to load safety dashboard:",
+        error,
+      );
+
+      setSafetyError(
+        "Some safety intelligence data is unavailable. Web security monitoring remains active.",
+      );
+    } finally {
+      setSafetyLoading(false);
+      setSafetyRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSafetyDashboard(true);
+
+    const interval =
+      setInterval(() => {
+        loadSafetyDashboard(false);
+      }, 5000);
+
+    return () =>
+      clearInterval(interval);
+  }, []);
+
+  async function loadCameraStatus(
+    cameraId: number | string,
+  ) {
+    try {
+      const data =
+        await fetchJson(
+          `/api/cameras/${cameraId}/live/status`,
+        );
+
+      setLiveCameraStates(
+        (previous) => ({
+          ...previous,
+          [String(cameraId)]:
+            data as LiveCameraState,
+        }),
+      );
+    } catch (error) {
+      console.warn(
+        `Camera ${cameraId} status unavailable:`,
+        error,
+      );
+    }
+  }
+
+  useEffect(() => {
+    if (cameras.length === 0) {
+      return;
+    }
+
+    cameras.forEach((camera) => {
+      loadCameraStatus(camera.id);
+    });
+  }, [cameras]);
+
+  useEffect(() => {
+    const interval =
+      setInterval(() => {
+        cameras.forEach((camera) => {
+          loadCameraStatus(camera.id);
+        });
+      }, 5000);
+
+    return () =>
+      clearInterval(interval);
+  }, [cameras]);
+
+  async function startLiveCamera(
+    cameraId: number | string,
+  ) {
+    setCameraActionId(
+      String(cameraId),
+    );
+
+    try {
+      const response =
+        await fetch(
+          `${API_URL}/api/cameras/${cameraId}/live/start?frame_interval=1&loop_video=true`,
+          {
+            method: "POST",
+          },
+        );
+
+      if (!response.ok) {
+        throw new Error(
+          `Camera start failed: ${response.status}`,
+        );
+      }
+
+      const data =
+        await response.json();
+
+      setLiveCameraStates(
+        (previous) => ({
+          ...previous,
+          [String(cameraId)]:
+            data as LiveCameraState,
+        }),
+      );
+
+      setSafetyActivity(
+        (previous) => [
+          {
+            id: `camera-start-${Date.now()}`,
+            title:
+              "Live camera analysis started",
+            description:
+              `Camera ${cameraId} is now being analyzed in the background.`,
+            severity: "low",
+            site:
+              `Camera #${cameraId}`,
+            timestamp:
+              new Date().toISOString(),
+            source: "camera",
+          },
+          ...previous,
+        ].slice(0, 15),
+      );
+    } catch (error) {
+      console.error(
+        "Failed to start camera:",
+        error,
+      );
+
+      setSafetyError(
+        "Unable to start the selected live camera.",
+      );
+    } finally {
+      setCameraActionId(null);
+
+      setTimeout(() => {
+        loadCameraStatus(
+          cameraId,
+        );
+      }, 1000);
+    }
+  }
+
+  async function stopLiveCamera(
+    cameraId: number | string,
+  ) {
+    setCameraActionId(
+      String(cameraId),
+    );
+
+    try {
+      const response =
+        await fetch(
+          `${API_URL}/api/cameras/${cameraId}/live/stop`,
+          {
+            method: "POST",
+          },
+        );
+
+      if (!response.ok) {
+        throw new Error(
+          `Camera stop failed: ${response.status}`,
+        );
+      }
+
+      const data =
+        await response.json();
+
+      setLiveCameraStates(
+        (previous) => ({
+          ...previous,
+          [String(cameraId)]:
+            data as LiveCameraState,
+        }),
+      );
+    } catch (error) {
+      console.error(
+        "Failed to stop camera:",
+        error,
+      );
+
+      setSafetyError(
+        "Unable to stop the selected live camera.",
+      );
+    } finally {
+      setCameraActionId(null);
+
+      setTimeout(() => {
+        loadCameraStatus(
+          cameraId,
+        );
+      }, 500);
+    }
+  }
 
   async function markAlertAsRead(
     alertId: string,
@@ -316,12 +873,13 @@ export default function Home() {
     setAlertActionError(null);
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/alerts/${alertId}/read`,
-        {
-          method: "PATCH",
-        },
-      );
+      const response =
+        await fetch(
+          `${API_URL}/api/alerts/${alertId}/read`,
+          {
+            method: "PATCH",
+          },
+        );
 
       if (!response.ok) {
         throw new Error(
@@ -343,7 +901,10 @@ export default function Home() {
 
       setUnreadAlertCount(
         (previous) =>
-          Math.max(0, previous - 1),
+          Math.max(
+            0,
+            previous - 1,
+          ),
       );
 
       const countResponse =
@@ -382,12 +943,6 @@ export default function Home() {
     }
   }
 
-  /*
-  ============================================================
-  MARK ALL ALERTS AS READ
-  ============================================================
-  */
-
   async function markAllAlertsAsRead() {
     if (markingAllRead) {
       return;
@@ -397,12 +952,13 @@ export default function Home() {
     setAlertActionError(null);
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/alerts/read-all`,
-        {
-          method: "PATCH",
-        },
-      );
+      const response =
+        await fetch(
+          `${API_URL}/api/alerts/read-all`,
+          {
+            method: "PATCH",
+          },
+        );
 
       if (!response.ok) {
         throw new Error(
@@ -455,12 +1011,6 @@ export default function Home() {
     }
   }
 
-  /*
-  ============================================================
-  WEBSOCKET LIVE MONITORING
-  ============================================================
-  */
-
   useEffect(() => {
     let effectActive = true;
 
@@ -474,7 +1024,8 @@ export default function Home() {
           reconnectTimerRef.current,
         );
 
-        reconnectTimerRef.current = null;
+        reconnectTimerRef.current =
+          null;
       }
     }
 
@@ -484,7 +1035,8 @@ export default function Home() {
           initialConnectionTimer,
         );
 
-        initialConnectionTimer = null;
+        initialConnectionTimer =
+          null;
       }
     }
 
@@ -492,7 +1044,9 @@ export default function Home() {
       incomingAlerts: Alert[],
     ) {
       if (
-        !Array.isArray(incomingAlerts) ||
+        !Array.isArray(
+          incomingAlerts,
+        ) ||
         incomingAlerts.length === 0
       ) {
         return;
@@ -510,7 +1064,9 @@ export default function Home() {
           previous.filter(
             (alert) =>
               !incomingIds.has(
-                String(alert.alert_id),
+                String(
+                  alert.alert_id,
+                ),
               ),
           );
 
@@ -529,18 +1085,8 @@ export default function Home() {
         !data.site ||
         !data.scan
       ) {
-        console.warn(
-          "Invalid monitoring update:",
-          data,
-        );
-
         return;
       }
-
-      console.log(
-        "LIVE MONITORING UPDATE:",
-        data,
-      );
 
       setLastUpdate(data);
 
@@ -566,7 +1112,9 @@ export default function Home() {
           previous.map(
             (site) =>
               String(site.site_id) ===
-              String(data.site.site_id)
+              String(
+                data.site.site_id,
+              )
                 ? {
                     ...site,
                     ...data.site,
@@ -609,7 +1157,9 @@ export default function Home() {
       });
 
       if (
-        Array.isArray(data.alerts) &&
+        Array.isArray(
+          data.alerts,
+        ) &&
         data.alerts.length > 0
       ) {
         mergeRealtimeAlerts(
@@ -638,12 +1188,7 @@ export default function Home() {
               );
             }
           })
-          .catch((error) => {
-            console.error(
-              "Failed to refresh alert count:",
-              error,
-            );
-          });
+          .catch(console.error);
       } else if (
         data.summary &&
         data.summary.alerts_count > 0
@@ -652,29 +1197,120 @@ export default function Home() {
       }
     }
 
+    function handleSafetyMessage(
+      data: SafetyLiveMessage,
+    ) {
+      const type =
+        String(
+          data?.type ?? "",
+        ).toLowerCase();
+
+      if (
+        type ===
+          "camera_safety_event" &&
+        data.event
+      ) {
+        const event =
+          normalizeSafetyEvent(
+            data.event,
+            Date.now(),
+          );
+
+        setSafetyEvents(
+          (previous) => [
+            event,
+            ...previous.filter(
+              (item) =>
+                String(
+                  item.id,
+                ) !==
+                String(event.id),
+            ),
+          ].slice(0, 100),
+        );
+
+        setSafetyActivity(
+          (previous) => [
+            {
+              id: `safety-${event.id}-${Date.now()}`,
+              title:
+                event.title ??
+                "Safety event detected",
+              description:
+                event.description ??
+                "A construction-site safety event was detected.",
+              severity:
+                event.severity ??
+                "medium",
+              site:
+                data.camera_name ??
+                `Camera #${data.camera_id ?? "—"}`,
+              timestamp:
+                event.created_at ??
+                data.timestamp ??
+                new Date().toISOString(),
+              source: "safety",
+            },
+            ...previous,
+          ].slice(0, 15),
+        );
+
+        return;
+      }
+
+      if (
+        type ===
+          "camera_analysis_status" ||
+        type ===
+          "camera_analysis_error"
+      ) {
+        setSafetyActivity(
+          (previous) => [
+            {
+              id: `camera-${Date.now()}`,
+              title:
+                data.message ??
+                "Camera analysis update",
+              description:
+                `Camera #${data.camera_id ?? "—"} analysis status changed.`,
+              severity:
+                type ===
+                "camera_analysis_error"
+                  ? "high"
+                  : "low",
+              site:
+                data.camera_name ??
+                `Camera #${data.camera_id ?? "—"}`,
+              timestamp:
+                data.timestamp ??
+                new Date().toISOString(),
+              source: "camera",
+            },
+            ...previous,
+          ].slice(0, 15),
+        );
+      }
+    }
+
     function scheduleReconnect() {
       if (!effectActive) {
         return;
       }
 
-      if (reconnectTimerRef.current) {
+      if (
+        reconnectTimerRef.current
+      ) {
         return;
       }
-
-      console.log(
-        "SiteAegis WebSocket reconnect scheduled...",
-      );
 
       reconnectTimerRef.current =
         setTimeout(() => {
           reconnectTimerRef.current =
             null;
 
-          if (!effectActive) {
-            return;
+          if (effectActive) {
+            connectWebSocket();
           }
-
-          connectWebSocket();
         }, 3000);
     }
 
@@ -692,22 +1328,13 @@ export default function Home() {
             WebSocket.CONNECTING
         )
       ) {
-        console.log(
-          "WebSocket already connected or connecting.",
-        );
-
         return;
       }
 
       clearReconnectTimer();
 
-      console.log(
-        "Connecting to SiteAegis WebSocket...",
-      );
-
-      const ws = new WebSocket(
-        WS_URL,
-      );
+      const ws =
+        new WebSocket(WS_URL);
 
       wsRef.current = ws;
 
@@ -719,10 +1346,6 @@ export default function Home() {
           return;
         }
 
-        console.log(
-          "SiteAegis WebSocket Connected",
-        );
-
         setConnected(true);
 
         try {
@@ -733,11 +1356,8 @@ export default function Home() {
                 "siteaegis_dashboard",
             }),
           );
-        } catch (error) {
-          console.warn(
-            "WebSocket handshake message failed:",
-            error,
-          );
+        } catch {
+          // Ignore handshake errors.
         }
       };
 
@@ -755,14 +1375,11 @@ export default function Home() {
               event.data,
             );
 
-          console.log(
-            "LIVE SITEAEGIS EVENT:",
-            data,
-          );
-
           if (
             data?.type ===
-            "connection"
+              "connection" ||
+            data?.type ===
+              "ack"
           ) {
             return;
           }
@@ -780,15 +1397,23 @@ export default function Home() {
             return;
           }
 
-          console.log(
-            "SiteAegis event received:",
-            data,
-          );
+          if (
+            String(
+              data?.type ?? "",
+            ).startsWith(
+              "camera_",
+            )
+          ) {
+            handleSafetyMessage(
+              data as SafetyLiveMessage,
+            );
+
+            return;
+          }
         } catch (error) {
           console.error(
             "Invalid WebSocket message:",
             error,
-            event.data,
           );
         }
       };
@@ -800,13 +1425,9 @@ export default function Home() {
         ) {
           return;
         }
-
-        console.warn(
-          "SiteAegis WebSocket connection error.",
-        );
       };
 
-      ws.onclose = (event) => {
+      ws.onclose = () => {
         if (
           wsRef.current === ws
         ) {
@@ -818,11 +1439,6 @@ export default function Home() {
         }
 
         setConnected(false);
-
-        console.log(
-          `SiteAegis WebSocket Disconnected (code ${event.code})`,
-        );
-
         scheduleReconnect();
       };
     }
@@ -851,28 +1467,24 @@ export default function Home() {
       setConnected(false);
 
       if (ws) {
-        if (
-          ws.readyState ===
-          WebSocket.OPEN
-        ) {
-          try {
+        try {
+          if (
+            ws.readyState ===
+              WebSocket.OPEN ||
+            ws.readyState ===
+              WebSocket.CONNECTING
+          ) {
             ws.close(
               1000,
               "Component cleanup",
             );
-          } catch {
-            // Ignore cleanup errors.
           }
+        } catch {
+          // Ignore cleanup errors.
         }
       }
     };
   }, []);
-
-  /*
-  ============================================================
-  DERIVED DASHBOARD DATA
-  ============================================================
-  */
 
   const monitoredSites =
     sites.filter(
@@ -884,7 +1496,10 @@ export default function Home() {
   const onlineSites =
     monitoredSites.filter(
       (site) =>
-        site.last_status ===
+        String(
+          site.last_status ??
+            "",
+        ).toLowerCase() ===
         "online",
     ).length;
 
@@ -907,11 +1522,222 @@ export default function Home() {
   const unreadAlerts =
     unreadAlertCount;
 
-  /*
-  ============================================================
-  ACTIVITY STREAM
-  ============================================================
-  */
+  const openIncidents =
+    incidents.filter(
+      (incident) => {
+        const status =
+          String(
+            incident.status ??
+              "open",
+          ).toLowerCase();
+
+        return (
+          status === "open" ||
+          status === "active" ||
+          status === "investigating"
+        );
+      },
+    );
+
+  const activeSafetyEvents =
+    safetyEvents.filter(
+      (event) =>
+        event.is_active !== false,
+    );
+
+  const criticalSafetyEvents =
+    activeSafetyEvents.filter(
+      (event) =>
+        String(
+          event.severity ??
+            "",
+        ).toLowerCase() ===
+          "critical" ||
+        Number(
+          event.risk_score ?? 0,
+        ) >= 90,
+    ).length;
+
+  const detectionCategories =
+    useMemo<
+      SafetyCategory[]
+    >(() => {
+      const definitions = [
+        {
+          key: "ppe",
+          label: "PPE",
+          shortLabel: "PPE",
+          matches: [
+            "ppe",
+            "helmet",
+            "hardhat",
+            "safety_vest",
+            "no_hardhat",
+            "no-safety vest",
+            "safety vest",
+          ],
+        },
+        {
+          key: "restricted_zone",
+          label:
+            "Restricted Zone",
+          shortLabel: "ZONE",
+          matches: [
+            "restricted_zone",
+            "zone_entry",
+            "restricted",
+          ],
+        },
+        {
+          key: "proximity",
+          label:
+            "Worker–Machine",
+          shortLabel:
+            "PROXIMITY",
+          matches: [
+            "worker_machine_proximity",
+            "proximity",
+          ],
+        },
+        {
+          key: "crowding",
+          label: "Crowding",
+          shortLabel:
+            "CROWDING",
+          matches: [
+            "crowding",
+            "crowd",
+          ],
+        },
+        {
+          key: "fall",
+          label: "Falls",
+          shortLabel: "FALL",
+          matches: [
+            "fall",
+            "worker_fall",
+          ],
+        },
+        {
+          key: "unsafe_movement",
+          label:
+            "Unsafe Movement",
+          shortLabel:
+            "MOVEMENT",
+          matches: [
+            "unsafe_movement",
+            "unsafe movement",
+          ],
+        },
+      ];
+
+      return definitions.map(
+        (definition) => {
+          const matchingEvents =
+            safetyEvents.filter(
+              (event) => {
+                const type =
+                  String(
+                    event.event_type ??
+                      "",
+                  ).toLowerCase();
+
+                const title =
+                  String(
+                    event.title ??
+                      "",
+                  ).toLowerCase();
+
+                return definition.matches.some(
+                  (match) =>
+                    type.includes(
+                      match,
+                    ) ||
+                    title.includes(
+                      match,
+                    ),
+                );
+              },
+            );
+
+          const hasCritical =
+            matchingEvents.some(
+              (event) =>
+                String(
+                  event.severity ??
+                    "",
+                ).toLowerCase() ===
+                  "critical" ||
+                Number(
+                  event.risk_score ??
+                    0,
+                ) >= 90,
+            );
+
+          const hasHigh =
+            matchingEvents.some(
+              (event) =>
+                String(
+                  event.severity ??
+                    "",
+                ).toLowerCase() ===
+                  "high" ||
+                Number(
+                  event.risk_score ??
+                    0,
+                ) >= 70,
+            );
+
+          return {
+            key: definition.key,
+            label: definition.label,
+            shortLabel:
+              definition.shortLabel,
+            count:
+              matchingEvents.length,
+            severity:
+              hasCritical
+                ? "critical"
+                : hasHigh
+                  ? "high"
+                  : matchingEvents.length >
+                      0
+                    ? "medium"
+                    : "low",
+          };
+        },
+      );
+    }, [safetyEvents]);
+
+  const latestSafetyEvents =
+    useMemo(
+      () =>
+        safetyEvents
+          .slice()
+          .sort(
+            (a, b) => {
+              const aTime =
+                a.created_at
+                  ? new Date(
+                      a.created_at,
+                    ).getTime()
+                  : 0;
+
+              const bTime =
+                b.created_at
+                  ? new Date(
+                      b.created_at,
+                    ).getTime()
+                  : 0;
+
+              return (
+                bTime - aTime
+              );
+            },
+          )
+          .slice(0, 8),
+      [safetyEvents],
+    );
 
   const activities =
     useMemo<Activity[]>(
@@ -932,59 +1758,61 @@ export default function Home() {
                 id:
                   event.event_id ??
                   `${update.scan.scan_id}-${result.length}`,
-
                 title:
                   event.title ??
                   "Monitoring change detected",
-
                 description:
                   event.description ??
                   "A change was detected during monitoring.",
-
                 severity:
                   event.severity ??
                   "info",
-
                 site:
                   update.site.name,
-
                 timestamp:
                   update.timestamp,
+                source: "web",
               });
             }
           } else {
             result.push({
               id:
                 update.scan.scan_id,
-
               title:
                 "Monitoring scan completed",
-
               description:
                 `${update.site.hostname} scanned successfully.`,
-
               severity:
                 "info",
-
               site:
                 update.site.name,
-
               timestamp:
                 update.timestamp,
+              source: "web",
             });
           }
         }
 
-        return result.slice(0, 10);
+        return [
+          ...safetyActivity,
+          ...result,
+        ]
+          .sort(
+            (a, b) =>
+              new Date(
+                b.timestamp,
+              ).getTime() -
+              new Date(
+                a.timestamp,
+              ).getTime(),
+          )
+          .slice(0, 15);
       },
-      [updates],
+      [
+        updates,
+        safetyActivity,
+      ],
     );
-
-  /*
-  ============================================================
-  FILTERED ALERTS
-  ============================================================
-  */
 
   const filteredAlerts =
     useMemo(() => {
@@ -1020,12 +1848,13 @@ export default function Home() {
               return (
                 type.includes("RISK") ||
                 type.includes("SSL") ||
-                type.includes("SECURITY")
+                type.includes(
+                  "SECURITY",
+                )
               );
             },
           );
 
-        case "all":
         default:
           return alerts;
       }
@@ -1063,22 +1892,22 @@ export default function Home() {
             return (
               type.includes("RISK") ||
               type.includes("SSL") ||
-              type.includes("SECURITY")
+              type.includes(
+                "SECURITY",
+              )
             );
           },
         ).length,
       };
     }, [alerts]);
 
-  /*
-  ============================================================
-  HELPERS
-  ============================================================
-  */
-
   function formatTime(
-    timestamp: string,
+    timestamp?: string | null,
   ) {
+    if (!timestamp) {
+      return "--";
+    }
+
     try {
       return new Date(
         timestamp,
@@ -1093,8 +1922,12 @@ export default function Home() {
   }
 
   function formatDateTime(
-    timestamp: string,
+    timestamp?: string | null,
   ) {
+    if (!timestamp) {
+      return "--";
+    }
+
     try {
       return new Date(
         timestamp,
@@ -1119,6 +1952,30 @@ export default function Home() {
     return level.toLowerCase();
   }
 
+  function severityClass(
+    severity?: string | null,
+  ) {
+    if (!severity) {
+      return "low";
+    }
+
+    const normalized =
+      severity.toLowerCase();
+
+    if (
+      [
+        "critical",
+        "high",
+        "medium",
+        "low",
+      ].includes(normalized)
+    ) {
+      return normalized;
+    }
+
+    return "low";
+  }
+
   function alertSeverityClass(
     severity?: string | null,
   ) {
@@ -1135,29 +1992,65 @@ export default function Home() {
     switch (filter) {
       case "all":
         return "ALL";
-
       case "unread":
         return "UNREAD";
-
       case "findings":
         return "FINDINGS";
-
       case "status":
         return "STATUS";
-
       case "security":
         return "SECURITY";
-
       default:
         return "ALL";
     }
   }
 
-  /*
-  ============================================================
-  UI
-  ============================================================
-  */
+  function humanizeEventType(
+    eventType?: string | null,
+  ) {
+    if (!eventType) {
+      return "Safety event";
+    }
+
+    return eventType
+      .replaceAll("_", " ")
+      .replace(/\b\w/g, (char) =>
+        char.toUpperCase(),
+      );
+  }
+
+  function cameraIsRunning(
+    camera: Camera,
+  ) {
+    const state =
+      liveCameraStates[
+        String(camera.id)
+      ];
+
+    if (!state) {
+      return (
+        String(
+          camera.status ??
+            "",
+        ).toLowerCase() ===
+          "running" ||
+        String(
+          camera.status ??
+            "",
+        ).toLowerCase() ===
+          "online"
+      );
+    }
+
+    return (
+      state.thread_alive === true ||
+      String(
+        state.status ??
+          "",
+      ).toLowerCase() ===
+        "running"
+    );
+  }
 
   return (
     <main className="dashboard">
@@ -1196,7 +2089,7 @@ export default function Home() {
       <section className="hero">
         <div>
           <span className="eyebrow">
-            REAL-TIME WEB SECURITY
+            REAL-TIME WEB + SITE SAFETY
           </span>
 
           <h2>
@@ -1210,12 +2103,13 @@ export default function Home() {
           <p>
             SiteAegis continuously
             monitors registered
-            websites, tracks
-            security changes,
-            evaluates risk, and
-            delivers live
-            intelligence through
-            the monitoring stream.
+            websites and construction
+            environments, evaluates
+            security and safety risk,
+            detects hazardous activity,
+            and delivers live
+            intelligence through a
+            unified monitoring stream.
           </p>
         </div>
 
@@ -1255,9 +2149,7 @@ export default function Home() {
           </strong>
 
           <small>
-            {sitesError
-              ? "Backend connection unavailable"
-              : "Registered monitoring targets"}
+            Registered monitoring targets
           </small>
         </div>
 
@@ -1296,7 +2188,7 @@ export default function Home() {
           </strong>
 
           <small>
-            Latest monitoring score
+            Latest web security score
           </small>
         </div>
 
@@ -1314,12 +2206,140 @@ export default function Home() {
           </strong>
 
           <small>
-            {alertsError
-              ? "Alert service unavailable"
-              : "Security alerts requiring attention"}
+            Security alerts requiring attention
           </small>
         </div>
       </section>
+
+      <section className="safety-stats-grid">
+        <div className="safety-stat-card">
+          <div className="safety-stat-top">
+            <span className="stat-label">
+              CAMERAS
+            </span>
+
+            <span className="safety-mini-icon">
+              CAM
+            </span>
+          </div>
+
+          <strong>
+            {safetyLoading
+              ? "—"
+              : cameras.length}
+          </strong>
+
+          <small>
+            Registered site cameras
+          </small>
+        </div>
+
+        <div className="safety-stat-card">
+          <div className="safety-stat-top">
+            <span className="stat-label">
+              SAFETY EVENTS
+            </span>
+
+            <span className="safety-mini-icon">
+              EVT
+            </span>
+          </div>
+
+          <strong
+            className={
+              criticalSafetyEvents >
+              0
+                ? "critical"
+                : ""
+            }
+          >
+            {safetyLoading
+              ? "—"
+              : activeSafetyEvents.length}
+          </strong>
+
+          <small>
+            Detected safety events
+          </small>
+        </div>
+
+        <div className="safety-stat-card">
+          <div className="safety-stat-top">
+            <span className="stat-label">
+              OPEN INCIDENTS
+            </span>
+
+            <span className="safety-mini-icon">
+              INC
+            </span>
+          </div>
+
+          <strong
+            className={
+              openIncidents.length >
+              0
+                ? "high"
+                : "low"
+            }
+          >
+            {safetyLoading
+              ? "—"
+              : openIncidents.length}
+          </strong>
+
+          <small>
+            Incidents requiring response
+          </small>
+        </div>
+
+        <div className="safety-stat-card">
+          <div className="safety-stat-top">
+            <span className="stat-label">
+              RESTRICTED ZONES
+            </span>
+
+            <span className="safety-mini-icon">
+              ZONE
+            </span>
+          </div>
+
+          <strong>
+            {safetyLoading
+              ? "—"
+              : zones.length}
+          </strong>
+
+          <small>
+            Configured safety boundaries
+          </small>
+        </div>
+      </section>
+
+      {safetyError && (
+        <div className="dashboard-notice">
+          <span className="notice-dot" />
+
+          <span>
+            {safetyError}
+          </span>
+
+          <button
+            type="button"
+            onClick={() =>
+              loadSafetyDashboard(
+                false,
+              )
+            }
+            disabled={
+              safetyRefreshing
+            }
+          >
+            {safetyRefreshing
+              ? "REFRESHING..."
+              : "REFRESH SAFETY"}
+          </button>
+        </div>
+      )}
 
       <section className="content-grid">
         <div className="panel">
@@ -1367,43 +2387,17 @@ export default function Home() {
                 SiteAegis could not
                 retrieve the registered
                 monitoring targets.
-                The backend may be
-                offline or temporarily
-                unavailable.
               </p>
 
               <button
                 type="button"
+                className="secondary-button"
                 onClick={() =>
                   loadSites(true)
                 }
                 disabled={
                   retryingSites
                 }
-                style={{
-                  marginTop: "16px",
-                  border:
-                    "1px solid rgba(255,255,255,0.16)",
-                  background:
-                    "rgba(255,255,255,0.06)",
-                  color: "#fff",
-                  borderRadius:
-                    "999px",
-                  padding:
-                    "9px 16px",
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  letterSpacing:
-                    "0.08em",
-                  cursor:
-                    retryingSites
-                      ? "default"
-                      : "pointer",
-                  opacity:
-                    retryingSites
-                      ? 0.55
-                      : 1,
-                }}
               >
                 {retryingSites
                   ? "RETRYING..."
@@ -1544,10 +2538,6 @@ export default function Home() {
                 available, but no live
                 monitoring update has
                 arrived yet.
-                SiteAegis will populate
-                this panel when the
-                monitoring stream sends
-                its next scan.
               </p>
             </div>
           )}
@@ -1560,7 +2550,9 @@ export default function Home() {
                 LIVE STREAM
               </span>
 
-              <h3>Activity</h3>
+              <h3>
+                Unified activity
+              </h3>
             </div>
 
             <span className="event-count">
@@ -1589,15 +2581,33 @@ export default function Home() {
                     key={activity.id}
                   >
                     <div className="activity-indicator">
-                      <span />
+                      <span
+                        className={
+                          activity.source ===
+                          "safety"
+                            ? "safety"
+                            : activity.source ===
+                                "camera"
+                              ? "camera"
+                              : ""
+                        }
+                      />
                     </div>
 
                     <div className="activity-body">
-                      <strong>
-                        {
-                          activity.title
-                        }
-                      </strong>
+                      <div className="activity-title-line">
+                        <strong>
+                          {
+                            activity.title
+                          }
+                        </strong>
+
+                        {activity.source && (
+                          <span className="activity-source">
+                            {activity.source}
+                          </span>
+                        )}
+                      </div>
 
                       <p>
                         {
@@ -1633,9 +2643,503 @@ export default function Home() {
         </div>
       </section>
 
-      {/* =====================================================
-          ALERT CENTER
-          ===================================================== */}
+      <section className="panel safety-panel">
+        <div className="panel-header">
+          <div>
+            <span className="eyebrow">
+              CONSTRUCTION SAFETY
+            </span>
+
+            <h3>
+              Safety intelligence
+            </h3>
+          </div>
+
+          <div className="panel-header-actions">
+            <span className="event-count">
+              {safetyRefreshing
+                ? "SYNCING"
+                : "LIVE"}
+            </span>
+
+            <button
+              type="button"
+              className="small-action-button"
+              onClick={() =>
+                loadSafetyDashboard(
+                  false,
+                )
+              }
+              disabled={
+                safetyRefreshing
+              }
+            >
+              {safetyRefreshing
+                ? "..."
+                : "REFRESH"}
+            </button>
+          </div>
+        </div>
+
+        <div className="safety-category-grid">
+          {detectionCategories.map(
+            (category) => (
+              <div
+                className={`detection-card ${severityClass(
+                  category.severity,
+                )}`}
+                key={category.key}
+              >
+                <div className="detection-card-top">
+                  <span>
+                    {
+                      category.shortLabel
+                    }
+                  </span>
+
+                  <span
+                    className={`severity-dot ${severityClass(
+                      category.severity,
+                    )}`}
+                  />
+                </div>
+
+                <strong>
+                  {category.count}
+                </strong>
+
+                <small>
+                  {category.label}
+                </small>
+              </div>
+            ),
+          )}
+        </div>
+
+        <div className="safety-columns">
+          <div className="safety-events-column">
+            <div className="subpanel-heading">
+              <div>
+                <span className="eyebrow">
+                  DETECTIONS
+                </span>
+
+                <h4>
+                  Recent safety events
+                </h4>
+              </div>
+
+              <span className="event-count">
+                {
+                  latestSafetyEvents.length
+                }{" "}
+                RECENT
+              </span>
+            </div>
+
+            {latestSafetyEvents.length ===
+            0 ? (
+              <div className="compact-empty">
+                <span>
+                  ◌
+                </span>
+
+                <p>
+                  No safety events
+                  have been recorded
+                  yet.
+                </p>
+              </div>
+            ) : (
+              <div className="safety-event-list">
+                {latestSafetyEvents.map(
+                  (event) => (
+                    <div
+                      className="safety-event-item"
+                      key={String(
+                        event.id,
+                      )}
+                    >
+                      <div
+                        className={`event-severity ${severityClass(
+                          event.severity,
+                        )}`}
+                      >
+                        {String(
+                          event.severity ??
+                            "LOW",
+                        )
+                          .slice(
+                            0,
+                            1,
+                          )
+                          .toUpperCase()}
+                      </div>
+
+                      <div className="safety-event-body">
+                        <div className="safety-event-title">
+                          <strong>
+                            {event.title ??
+                              humanizeEventType(
+                                event.event_type,
+                              )}
+                          </strong>
+
+                          {event.risk_score !==
+                            null &&
+                            event.risk_score !==
+                              undefined && (
+                              <span>
+                                RISK{" "}
+                                {
+                                  event.risk_score
+                                }
+                              </span>
+                            )}
+                        </div>
+
+                        <p>
+                          {event.description ??
+                            humanizeEventType(
+                              event.event_type,
+                            )}
+                        </p>
+
+                        <time>
+                          {event.camera_id !==
+                            null &&
+                            event.camera_id !==
+                              undefined &&
+                            `CAMERA #${event.camera_id} · `}
+                          {event.zone_id !==
+                            null &&
+                            event.zone_id !==
+                              undefined &&
+                            `ZONE #${event.zone_id} · `}
+                          {formatDateTime(
+                            event.created_at,
+                          )}
+                        </time>
+                      </div>
+                    </div>
+                  ),
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="incident-column">
+            <div className="subpanel-heading">
+              <div>
+                <span className="eyebrow">
+                  RESPONSE
+                </span>
+
+                <h4>
+                  Open incidents
+                </h4>
+              </div>
+
+              <span
+                className={
+                  openIncidents.length >
+                  0
+                    ? "incident-count critical"
+                    : "incident-count low"
+                }
+              >
+                {
+                  openIncidents.length
+                }
+              </span>
+            </div>
+
+            {openIncidents.length ===
+            0 ? (
+              <div className="compact-empty">
+                <span>
+                  ✓
+                </span>
+
+                <p>
+                  No open safety
+                  incidents.
+                </p>
+              </div>
+            ) : (
+              <div className="incident-list">
+                {openIncidents
+                  .slice(0, 6)
+                  .map(
+                    (incident) => (
+                      <div
+                        className="incident-item"
+                        key={String(
+                          incident.id,
+                        )}
+                      >
+                        <div
+                          className={`event-severity ${severityClass(
+                            incident.severity,
+                          )}`}
+                        >
+                          !
+                        </div>
+
+                        <div className="incident-body">
+                          <div className="safety-event-title">
+                            <strong>
+                              {incident.title ??
+                                humanizeEventType(
+                                  incident.incident_type,
+                                )}
+                            </strong>
+
+                            <span>
+                              {
+                                incident.status ??
+                                "OPEN"
+                              }
+                            </span>
+                          </div>
+
+                          <p>
+                            {incident.description ??
+                              "Safety incident requires review."}
+                          </p>
+
+                          <time>
+                            {incident.risk_score !==
+                              null &&
+                              incident.risk_score !==
+                                undefined &&
+                              `RISK ${incident.risk_score} · `}
+                            {formatDateTime(
+                              incident.created_at,
+                            )}
+                          </time>
+                        </div>
+                      </div>
+                    ),
+                  )}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="panel cameras-panel">
+        <div className="panel-header">
+          <div>
+            <span className="eyebrow">
+              VIDEO INTELLIGENCE
+            </span>
+
+            <h3>
+              Site cameras
+            </h3>
+          </div>
+
+          <span className="event-count">
+            {cameras.length} CAMERAS
+          </span>
+        </div>
+
+        {cameras.length === 0 ? (
+          <div className="compact-empty camera-empty">
+            <span>
+              CAM
+            </span>
+
+            <p>
+              No cameras are currently
+              registered with SiteAegis.
+            </p>
+          </div>
+        ) : (
+          <div className="camera-grid">
+            {cameras.map(
+              (camera) => {
+                const state =
+                  liveCameraStates[
+                    String(
+                      camera.id,
+                    )
+                  ];
+
+                const running =
+                  cameraIsRunning(
+                    camera,
+                  );
+
+                return (
+                  <div
+                    className={`camera-card ${
+                      running
+                        ? "running"
+                        : ""
+                    }`}
+                    key={String(
+                      camera.id,
+                    )}
+                  >
+                    <div className="camera-visual">
+                      <div className="camera-grid-lines" />
+
+                      <div className="camera-status-pill">
+                        <span
+                          className={
+                            running
+                              ? "online"
+                              : "offline"
+                          }
+                        />
+
+                        {running
+                          ? "ANALYZING"
+                          : "STANDBY"}
+                      </div>
+
+                      <div className="camera-center">
+                        <span>
+                          CAM
+                        </span>
+
+                        <strong>
+                          #
+                          {
+                            camera.id
+                          }
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="camera-content">
+                      <div className="camera-title-row">
+                        <div>
+                          <h4>
+                            {
+                              camera.name
+                            }
+                          </h4>
+
+                          <p>
+                            {camera.location ??
+                              "Construction site"}
+                          </p>
+                        </div>
+
+                        <span className="camera-type">
+                          {String(
+                            camera.source_type ??
+                              "SOURCE",
+                          ).toUpperCase()}
+                        </span>
+                      </div>
+
+                      <div className="camera-metrics">
+                        <div>
+                          <span>
+                            FRAMES
+                          </span>
+
+                          <strong>
+                            {
+                              state?.frames_processed ??
+                              0
+                            }
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            EVENTS
+                          </span>
+
+                          <strong>
+                            {
+                              state?.events_created ??
+                              0
+                            }
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            STATUS
+                          </span>
+
+                          <strong>
+                            {state?.status ??
+                              camera.status ??
+                              "offline"}
+                          </strong>
+                        </div>
+                      </div>
+
+                      {state?.last_error && (
+                        <div className="camera-error">
+                          {state.last_error}
+                        </div>
+                      )}
+
+                      <div className="camera-actions">
+                        {!running ? (
+                          <button
+                            type="button"
+                            className="camera-start-button"
+                            onClick={() =>
+                              startLiveCamera(
+                                camera.id,
+                              )
+                            }
+                            disabled={
+                              cameraActionId ===
+                              String(
+                                camera.id,
+                              )
+                            }
+                          >
+                            {cameraActionId ===
+                            String(
+                              camera.id,
+                            )
+                              ? "STARTING..."
+                              : "START LIVE ANALYSIS"}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="camera-stop-button"
+                            onClick={() =>
+                              stopLiveCamera(
+                                camera.id,
+                              )
+                            }
+                            disabled={
+                              cameraActionId ===
+                              String(
+                                camera.id,
+                              )
+                            }
+                          >
+                            {cameraActionId ===
+                            String(
+                              camera.id,
+                            )
+                              ? "STOPPING..."
+                              : "STOP ANALYSIS"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              },
+            )}
+          </div>
+        )}
+      </section>
 
       <section className="panel alerts-panel">
         <div className="panel-header">
@@ -1644,17 +3148,14 @@ export default function Home() {
               SECURITY ALERTS
             </span>
 
-            <h3>Alert Center</h3>
+            <h3>
+              Alert Center
+            </h3>
 
-            <small
-              style={{
-                display: "block",
-                marginTop: "6px",
-                opacity: 0.55,
-              }}
-            >
+            <small className="panel-subtitle">
               {alerts.length} total alerts ·{" "}
-              {unreadAlerts} requiring attention
+              {unreadAlerts} requiring
+              attention
             </small>
           </div>
 
@@ -1685,20 +3186,7 @@ export default function Home() {
         </div>
 
         {alertActionError && (
-          <div
-            style={{
-              marginBottom: "16px",
-              padding: "11px 14px",
-              border:
-                "1px solid rgba(255,255,255,0.10)",
-              borderRadius: "10px",
-              background:
-                "rgba(255,255,255,0.035)",
-              fontSize: "11px",
-              lineHeight: 1.5,
-              opacity: 0.8,
-            }}
-          >
+          <div className="alert-action-error">
             {alertActionError}
           </div>
         )}
@@ -1715,44 +3203,18 @@ export default function Home() {
 
             <p>
               SiteAegis could not
-              retrieve security alerts
-              from the backend. Existing
-              dashboard monitoring can
-              continue independently.
+              retrieve security alerts.
             </p>
 
             <button
               type="button"
+              className="secondary-button"
               onClick={() =>
                 loadAlerts(true)
               }
               disabled={
                 retryingAlerts
               }
-              style={{
-                marginTop: "16px",
-                border:
-                  "1px solid rgba(255,255,255,0.16)",
-                background:
-                  "rgba(255,255,255,0.06)",
-                color: "#fff",
-                borderRadius:
-                  "999px",
-                padding:
-                  "9px 16px",
-                fontSize: "10px",
-                fontWeight: 700,
-                letterSpacing:
-                  "0.08em",
-                cursor:
-                  retryingAlerts
-                    ? "default"
-                    : "pointer",
-                opacity:
-                  retryingAlerts
-                    ? 0.55
-                    : 1,
-              }}
             >
               {retryingAlerts
                 ? "RETRYING..."
@@ -1763,33 +3225,8 @@ export default function Home() {
           <>
             {!alertsLoading &&
               alerts.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems:
-                      "center",
-                    justifyContent:
-                      "space-between",
-                    gap: "12px",
-                    flexWrap:
-                      "wrap",
-                    marginBottom:
-                      "20px",
-                    paddingBottom:
-                      "16px",
-                    borderBottom:
-                      "1px solid rgba(255,255,255,0.07)",
-                  }}
-                >
-                  <div
-                    style={{
-                      display:
-                        "flex",
-                      gap: "8px",
-                      flexWrap:
-                        "wrap",
-                    }}
-                  >
+                <div className="alert-toolbar">
+                  <div className="alert-filters">
                     {(
                       [
                         "all",
@@ -1817,44 +3254,16 @@ export default function Home() {
                                 filter,
                               )
                             }
-                            style={{
-                              border:
-                                active
-                                  ? "1px solid rgba(255,255,255,0.28)"
-                                  : "1px solid rgba(255,255,255,0.09)",
-                              background:
-                                active
-                                  ? "rgba(255,255,255,0.10)"
-                                  : "rgba(255,255,255,0.025)",
-                              color:
-                                active
-                                  ? "#ffffff"
-                                  : "rgba(255,255,255,0.55)",
-                              borderRadius:
-                                "999px",
-                              padding:
-                                "7px 12px",
-                              fontSize:
-                                "10px",
-                              fontWeight:
-                                700,
-                              letterSpacing:
-                                "0.08em",
-                              cursor:
-                                "pointer",
-                              transition:
-                                "all 0.2s ease",
-                            }}
+                            className={
+                              active
+                                ? "active"
+                                : ""
+                            }
                           >
                             {alertFilterLabel(
                               filter,
                             )}{" "}
-                            <span
-                              style={{
-                                opacity:
-                                  0.55,
-                              }}
-                            >
+                            <span>
                               {
                                 alertFilterCounts[
                                   filter
@@ -1867,18 +3276,7 @@ export default function Home() {
                     )}
                   </div>
 
-                  <span
-                    style={{
-                      fontSize:
-                        "10px",
-                      letterSpacing:
-                        "0.08em",
-                      opacity:
-                        0.45,
-                      textTransform:
-                        "uppercase",
-                    }}
-                  >
+                  <span className="showing-count">
                     Showing{" "}
                     {
                       filteredAlerts.length
@@ -1899,9 +3297,8 @@ export default function Home() {
                 </h4>
 
                 <p>
-                  SiteAegis is
-                  retrieving the
-                  latest alerts.
+                  SiteAegis is retrieving
+                  the latest alerts.
                 </p>
               </div>
             ) : alerts.length ===
@@ -1916,10 +3313,9 @@ export default function Home() {
                 </h4>
 
                 <p>
-                  No alerts have
-                  been generated
-                  by the monitoring
-                  system yet.
+                  No alerts have been
+                  generated by the
+                  monitoring system yet.
                 </p>
               </div>
             ) : filteredAlerts.length ===
@@ -1938,9 +3334,8 @@ export default function Home() {
                 </h4>
 
                 <p>
-                  There are no
-                  alerts matching
-                  the selected
+                  There are no alerts
+                  matching the selected
                   filter.
                 </p>
               </div>
@@ -1960,36 +3355,9 @@ export default function Home() {
                       key={
                         alert.alert_id
                       }
-                      style={{
-                        position:
-                          "relative",
-                        opacity:
-                          alert.is_read
-                            ? 0.62
-                            : 1,
-                        transition:
-                          "opacity 0.2s ease, transform 0.2s ease",
-                      }}
                     >
                       {!alert.is_read && (
-                        <div
-                          style={{
-                            position:
-                              "absolute",
-                            left: 0,
-                            top: "14px",
-                            bottom:
-                              "14px",
-                            width:
-                              "2px",
-                            borderRadius:
-                              "4px",
-                            background:
-                              "currentColor",
-                            opacity:
-                              0.8,
-                          }}
-                        />
+                        <div className="alert-unread-line" />
                       )}
 
                       <div
@@ -2019,28 +3387,7 @@ export default function Home() {
 
                           {index ===
                             0 && (
-                            <span
-                              style={{
-                                marginLeft:
-                                  "6px",
-                                fontSize:
-                                  "9px",
-                                fontWeight:
-                                  700,
-                                letterSpacing:
-                                  "0.08em",
-                                padding:
-                                  "3px 7px",
-                                borderRadius:
-                                  "999px",
-                                background:
-                                  "rgba(255,255,255,0.07)",
-                                border:
-                                  "1px solid rgba(255,255,255,0.10)",
-                                opacity:
-                                  0.7,
-                              }}
-                            >
+                            <span className="latest-badge">
                               LATEST
                             </span>
                           )}
@@ -2103,9 +3450,93 @@ export default function Home() {
         )}
       </section>
 
+      <section className="services-strip">
+        <div className="service-item">
+          <span
+            className={`service-dot ${
+              connected
+                ? "online"
+                : "offline"
+            }`}
+          />
+
+          <div>
+            <strong>
+              WEBSOCKET
+            </strong>
+
+            <small>
+              {connected
+                ? "Live event stream active"
+                : "Reconnecting"}
+            </small>
+          </div>
+        </div>
+
+        <div className="service-item">
+          <span
+            className={`service-dot ${
+              health?.status ===
+              "healthy"
+                ? "online"
+                : "offline"
+            }`}
+          />
+
+          <div>
+            <strong>
+              API
+            </strong>
+
+            <small>
+              {health?.status ??
+                "Checking"}
+            </small>
+          </div>
+        </div>
+
+        <div className="service-item">
+          <span
+            className={`service-dot ${
+              health?.services
+                ?.redis ===
+              "connected"
+                ? "online"
+                : "offline"
+            }`}
+          />
+
+          <div>
+            <strong>
+              REDIS
+            </strong>
+
+            <small>
+              {health?.services
+                ?.redis ??
+                "Checking"}
+            </small>
+          </div>
+        </div>
+
+        <div className="service-item">
+          <span className="service-dot online" />
+
+          <div>
+            <strong>
+              POSTGRESQL
+            </strong>
+
+            <small>
+              Primary database
+            </small>
+          </div>
+        </div>
+      </section>
+
       <footer className="footer">
         <span>
-          SITEAEGIS / SECURITY MONITORING
+          SITEAEGIS / SECURITY + SAFETY INTELLIGENCE
         </span>
 
         <span>

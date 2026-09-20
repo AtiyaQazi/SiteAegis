@@ -15,6 +15,13 @@ from app.api import (
     zones,
 )
 
+from app.core.database import Base, engine
+from app.core.config import settings
+
+# Import all models so SQLAlchemy registers every table
+# before Base.metadata.create_all() is executed.
+from app import models  # noqa: F401
+
 from app.services.monitoring_scheduler import (
     start_monitoring_scheduler,
     stop_monitoring_scheduler,
@@ -24,8 +31,45 @@ from app.websocket.manager import manager
 
 
 # ============================================================
+# DATABASE INITIALIZATION
+# ============================================================
+
+
+def initialize_database():
+    """
+    Create all SQLAlchemy tables that do not already exist.
+
+    The actual database is determined by DATABASE_URL.
+    Existing databases/tables are not deleted or recreated.
+    """
+
+    print(
+        "[DATABASE] Initializing database schema..."
+    )
+
+    try:
+
+        Base.metadata.create_all(
+            bind=engine
+        )
+
+        print(
+            "[DATABASE] Database schema initialized successfully."
+        )
+
+    except Exception as exc:
+
+        print(
+            f"[DATABASE ERROR] Could not initialize database: {exc}"
+        )
+
+        raise
+
+
+# ============================================================
 # APPLICATION LIFESPAN
 # ============================================================
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,32 +78,90 @@ async def lifespan(app: FastAPI):
     print("SITEAEGIS BACKEND STARTING")
     print("=" * 60)
 
+    # --------------------------------------------------------
+    # DATABASE
+    # --------------------------------------------------------
+
+    initialize_database()
+
+    # --------------------------------------------------------
+    # MONITORING SCHEDULER
+    # --------------------------------------------------------
+
     try:
+
         start_monitoring_scheduler()
-        print("[STARTUP] Monitoring scheduler started.")
+
+        print(
+            "[STARTUP] Monitoring scheduler started."
+        )
+
     except Exception as exc:
+
         print(
             f"[STARTUP ERROR] Could not start monitoring scheduler: {exc}"
         )
 
-    print("[STARTUP] WebSocket endpoint: /ws")
-    print("[STARTUP] API endpoint: /api")
-    print("[STARTUP] Scanner endpoint: /api/scan")
-    print("[STARTUP] PPE endpoint: /api/scan/ppe")
-    print("[STARTUP] Alerts endpoint: /api/alerts")
-    print("[STARTUP] Cameras endpoint: /api/cameras")
-    print("[STARTUP] Zones endpoint: /api/zones")
-    print("[STARTUP] Safety endpoint: /api/safety")
-    print("[STARTUP] Incidents endpoint: /api/incidents")
+    # --------------------------------------------------------
+    # STARTUP INFORMATION
+    # --------------------------------------------------------
+
+    print(
+        "[STARTUP] WebSocket endpoint: /ws"
+    )
+
+    print(
+        "[STARTUP] API endpoint: /api"
+    )
+
+    print(
+        "[STARTUP] Scanner endpoint: /api/scan"
+    )
+
+    print(
+        "[STARTUP] PPE endpoint: /api/scan/ppe"
+    )
+
+    print(
+        "[STARTUP] Alerts endpoint: /api/alerts"
+    )
+
+    print(
+        "[STARTUP] Cameras endpoint: /api/cameras"
+    )
+
+    print(
+        "[STARTUP] Zones endpoint: /api/zones"
+    )
+
+    print(
+        "[STARTUP] Safety endpoint: /api/safety"
+    )
+
+    print(
+        "[STARTUP] Incidents endpoint: /api/incidents"
+    )
 
     yield
 
-    print("[SHUTDOWN] Stopping monitoring scheduler...")
+    # --------------------------------------------------------
+    # SHUTDOWN
+    # --------------------------------------------------------
+
+    print(
+        "[SHUTDOWN] Stopping monitoring scheduler..."
+    )
 
     try:
+
         stop_monitoring_scheduler()
-        print("[SHUTDOWN] Monitoring scheduler stopped.")
+
+        print(
+            "[SHUTDOWN] Monitoring scheduler stopped."
+        )
+
     except Exception as exc:
+
         print(
             f"[SHUTDOWN ERROR] Could not stop monitoring scheduler: {exc}"
         )
@@ -73,13 +175,19 @@ async def lifespan(app: FastAPI):
 # FASTAPI APPLICATION
 # ============================================================
 
+
 app = FastAPI(
     title="SiteAegis API",
     description=(
         "Real-time web security monitoring and "
         "construction site safety intelligence platform."
     ),
-    version="1.5.0",
+
+    # Use the single version defined in config.py.
+    # This keeps OpenAPI and the application version
+    # consistent.
+    version=settings.APP_VERSION,
+
     lifespan=lifespan,
 )
 
@@ -87,6 +195,7 @@ app = FastAPI(
 # ============================================================
 # CORS
 # ============================================================
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -103,6 +212,7 @@ app.add_middleware(
 # ============================================================
 # API ROUTERS
 # ============================================================
+
 
 app.include_router(
     routes.router,
@@ -154,6 +264,7 @@ app.include_router(
 # ROOT
 # ============================================================
 
+
 @app.get("/")
 def root():
 
@@ -161,6 +272,7 @@ def root():
         "name": "SiteAegis",
         "status": "online",
         "message": "SiteAegis backend is running.",
+        "version": settings.APP_VERSION,
         "api": "/api",
         "websocket": "/ws",
         "modules": {
@@ -179,12 +291,15 @@ def root():
 # WEBSOCKET
 # ============================================================
 
+
 @app.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
 ):
 
-    await manager.connect(websocket)
+    await manager.connect(
+        websocket
+    )
 
     try:
 
@@ -229,7 +344,9 @@ async def websocket_endpoint(
 
     finally:
 
-        manager.disconnect(websocket)
+        manager.disconnect(
+            websocket
+        )
 
         print(
             "[WEBSOCKET] Client removed from manager."

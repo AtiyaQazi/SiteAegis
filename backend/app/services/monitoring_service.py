@@ -9,17 +9,88 @@ from app.models import Site, Scan
 from app.services.site_service import run_site_scan
 from app.services.monitoring_events import detect_scan_changes
 from app.services.alert_service import create_alerts_from_events
+from app.services.redis_service import cache_latest_monitoring_update
 from app.websocket.manager import manager
 
 
+# ============================================================
+# TIME HELPERS
+# ============================================================
+
+
 def utc_now() -> datetime:
-    """Return current UTC time as a naive datetime."""
+    """
+    Return current UTC time as a naive datetime.
 
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    SiteAegis database timestamp columns are currently
+    PostgreSQL `timestamp without time zone`.
+
+    Existing SiteAegis records are stored using Pakistan
+    local time (Asia/Karachi), so database timestamps must
+    be normalized before UTC comparisons.
+    """
+
+    return datetime.now(timezone.utc).replace(
+        tzinfo=None
+    )
 
 
-def serialize_text_value(value: Any) -> str | None:
-    """Convert scanner values into database-safe text."""
+def database_time_to_utc(
+    value: datetime | None,
+) -> datetime | None:
+    """
+    Convert a database timestamp representing
+    Asia/Karachi local time into a naive UTC datetime.
+
+    PostgreSQL timestamp columns are currently
+    `timestamp without time zone`.
+
+    Example:
+
+        DB: 14:51 Pakistan time
+        UTC: 09:51
+
+    The returned datetime remains naive so it can safely
+    be compared with utc_now().
+    """
+
+    if value is None:
+        return None
+
+    from zoneinfo import ZoneInfo
+
+    pakistan_timezone = ZoneInfo(
+        "Asia/Karachi"
+    )
+
+    local_time = value.replace(
+        tzinfo=pakistan_timezone
+    )
+
+    utc_time = local_time.astimezone(
+        timezone.utc
+    )
+
+    return utc_time.replace(
+        tzinfo=None
+    )
+
+
+# ============================================================
+# SERIALIZATION HELPERS
+# ============================================================
+
+
+def serialize_text_value(
+    value: Any,
+) -> str | None:
+    """
+    Convert scanner values into database-safe text.
+
+    SSL issuer/subject can be returned by Python's
+    ssl module as nested tuples. JSON serialization
+    converts those structures into database-safe strings.
+    """
 
     if value is None:
         return None
@@ -29,20 +100,32 @@ def serialize_text_value(value: Any) -> str | None:
 
     try:
         return json.dumps(value)
+
     except (TypeError, ValueError):
         return str(value)
+
+
+# ============================================================
+# SCAN HELPERS
+# ============================================================
 
 
 def get_last_scan(
     db: Session,
     site: Site,
 ) -> Scan | None:
-    """Return the latest scan for this site."""
+    """
+    Return the latest scan for this site.
+    """
 
     return (
         db.query(Scan)
-        .filter(Scan.site_id == site.id)
-        .order_by(Scan.created_at.desc())
+        .filter(
+            Scan.site_id == site.id
+        )
+        .order_by(
+            Scan.created_at.desc()
+        )
         .first()
     )
 
@@ -51,45 +134,62 @@ def is_scan_due(
     site: Site,
     last_scan: Scan | None,
 ) -> bool:
-    """Determine whether a monitoring scan is due."""
+    """
+    Determine whether a monitoring scan is due.
+
+    A site with no previous scan is immediately due.
+
+    Database timestamps are currently stored as naive
+    Asia/Karachi timestamps. They are converted to UTC
+    before comparing with the current UTC time.
+    """
 
     if last_scan is None:
         return True
 
-    if last_scan.created_at is None:
-        return True
-
     now = utc_now()
 
-    elapsed_seconds = (
-        now - last_scan.created_at
-    ).total_seconds()
-
-    interval_minutes = (
-        site.monitoring_interval_minutes or 1
+    last_scan_utc = database_time_to_utc(
+        last_scan.created_at
     )
 
-    interval_seconds = interval_minutes * 60
+    if last_scan_utc is None:
+        return True
+
+    elapsed_seconds = (
+        now - last_scan_utc
+    ).total_seconds()
+
+    interval_seconds = (
+        site.monitoring_interval_minutes * 60
+    )
+
+    print(
+        f"[MONITORING] Due check | "
+        f"site={site.id} | "
+        f"interval={site.monitoring_interval_minutes}m | "
+        f"last_scan_db={last_scan.created_at} | "
+        f"last_scan_utc={last_scan_utc} | "
+        f"now_utc={now} | "
+        f"elapsed={elapsed_seconds:.1f}s | "
+        f"required={interval_seconds}s"
+    )
 
     return elapsed_seconds >= interval_seconds
 
 
-def parse_json_value(
-    value: str | None,
-) -> Any:
-    """Safely convert stored JSON text back into Python."""
-
-    if value is None:
-        return None
-
-    try:
-        return json.loads(value)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return value
+# ============================================================
+# WEBSOCKET PAYLOAD HELPERS
+# ============================================================
 
 
-def build_event_payload(event) -> dict:
-    """Convert MonitoringEvent ORM object into WebSocket data."""
+def build_event_payload(
+    event: Any,
+) -> dict[str, Any]:
+    """
+    Convert a MonitoringEvent model into a
+    JSON-safe WebSocket payload.
+    """
 
     return {
         "event_id": str(event.id),
@@ -98,13 +198,7 @@ def build_event_payload(event) -> dict:
         "event_type": event.event_type,
         "severity": event.severity,
         "title": event.title,
-        "description": event.description,
-        "previous_value": parse_json_value(
-            event.previous_value
-        ),
-        "current_value": parse_json_value(
-            event.current_value
-        ),
+        "message": event.description,
         "created_at": (
             event.created_at.isoformat()
             if event.created_at
@@ -113,8 +207,13 @@ def build_event_payload(event) -> dict:
     }
 
 
-def build_alert_payload(alert) -> dict:
-    """Convert Alert ORM object into WebSocket data."""
+def build_alert_payload(
+    alert: Any,
+) -> dict[str, Any]:
+    """
+    Convert an Alert model into a
+    JSON-safe WebSocket payload.
+    """
 
     return {
         "alert_id": str(alert.id),
@@ -137,13 +236,24 @@ def build_alert_payload(alert) -> dict:
     }
 
 
+# ============================================================
+# REDIS + WEBSOCKET
+# ============================================================
+
+
 def broadcast_monitoring_update(
     site: Site,
     scan: Scan,
     events: list,
     alerts: list,
 ) -> None:
-    """Broadcast monitoring update to connected WebSocket clients."""
+    """
+    Cache and broadcast the latest monitoring update.
+
+    Redis is used as a fast cache.
+    WebSocket is used for real-time dashboard updates.
+    PostgreSQL remains the permanent source of truth.
+    """
 
     message = {
         "type": "monitoring_update",
@@ -183,12 +293,45 @@ def broadcast_monitoring_update(
         },
     }
 
+    # --------------------------------------------------------
+    # REDIS CACHE
+    # --------------------------------------------------------
+
+    redis_cached = cache_latest_monitoring_update(
+        site_id=site.id,
+        payload=message,
+    )
+
+    if redis_cached:
+        print(
+            f"[REDIS] Cached latest monitoring update "
+            f"for site #{site.id}"
+        )
+
+    else:
+        print(
+            f"[REDIS] Could not cache monitoring update "
+            f"for site #{site.id}. "
+            f"Continuing with WebSocket."
+        )
+
+    # --------------------------------------------------------
+    # WEBSOCKET
+    # --------------------------------------------------------
+
     print(
         "[WEBSOCKET] Broadcasting monitoring_update "
         f"for site #{site.id}"
     )
 
-    manager.broadcast_sync(message)
+    manager.broadcast_sync(
+        message
+    )
+
+
+# ============================================================
+# SCAN PERSISTENCE
+# ============================================================
 
 
 def persist_scan(
@@ -198,39 +341,55 @@ def persist_scan(
     previous_scan: Scan | None = None,
 ) -> Scan:
     """
-    Persist scan, detect changes, create alerts,
-    and broadcast the monitoring update.
+    Convert scanner output into a Scan database record,
+    detect monitoring changes, create alerts for those
+    events, persist everything, cache the latest state
+    in Redis, and broadcast the update through WebSocket.
     """
 
-    availability = scan_result.get("availability") or {}
-    ssl_result = scan_result.get("ssl") or {}
-
-    security_headers = (
-        scan_result.get("security_headers") or {}
+    availability = (
+        scan_result.get("availability")
+        or {}
     )
 
-    risk = scan_result.get("risk") or {}
+    ssl = (
+        scan_result.get("ssl")
+        or {}
+    )
 
-    findings = risk.get("findings") or []
+    security_headers = (
+        scan_result.get("security_headers")
+        or {}
+    )
+
+    risk = (
+        scan_result.get("risk")
+        or {}
+    )
+
+    findings = (
+        risk.get("findings")
+        or []
+    )
 
     severity_counts: dict[str, int] = {}
 
     for finding in findings:
-        if not isinstance(finding, dict):
-            continue
-
         severity = finding.get(
             "severity",
             "unknown",
         )
 
         severity_counts[severity] = (
-            severity_counts.get(severity, 0) + 1
+            severity_counts.get(
+                severity,
+                0,
+            ) + 1
         )
 
-    # ========================================================
-    # CREATE SCAN
-    # ========================================================
+    # --------------------------------------------------------
+    # CREATE SCAN RECORD
+    # --------------------------------------------------------
 
     scan = Scan(
         site_id=site.id,
@@ -262,27 +421,26 @@ def persist_scan(
             "ip_address",
         ),
 
-        # SSL enabled comes from availability.
-        ssl_enabled=availability.get(
-            "ssl_enabled",
+        ssl_enabled=ssl.get(
+            "enabled",
             False,
         ),
 
-        ssl_valid=ssl_result.get(
+        ssl_valid=ssl.get(
             "valid",
             False,
         ),
 
         ssl_issuer=serialize_text_value(
-            ssl_result.get("issuer")
+            ssl.get("issuer")
         ),
 
         ssl_subject=serialize_text_value(
-            ssl_result.get("subject")
+            ssl.get("subject")
         ),
 
         ssl_error=serialize_text_value(
-            ssl_result.get("error")
+            ssl.get("error")
         ),
 
         security_headers_score=security_headers.get(
@@ -310,7 +468,9 @@ def persist_scan(
         ),
 
         security_headers_error=serialize_text_value(
-            security_headers.get("error")
+            security_headers.get(
+                "error"
+            )
         ),
 
         risk_score=risk.get(
@@ -318,7 +478,9 @@ def persist_scan(
             100,
         ),
 
-        # Scanner returns risk_level.
+        # IMPORTANT:
+        # site_service.calculate_risk() returns
+        # "risk_level", not "level".
         risk_level=risk.get(
             "risk_level",
             "low",
@@ -337,13 +499,13 @@ def persist_scan(
 
     db.add(scan)
 
-    # IMPORTANT:
-    # Make scan.id available before creating events.
+    # Flush first so scan.id exists before
+    # monitoring events reference this scan.
     db.flush()
 
-    # ========================================================
-    # UPDATE SITE SNAPSHOT
-    # ========================================================
+    # --------------------------------------------------------
+    # UPDATE SITE LATEST SCAN SNAPSHOT
+    # --------------------------------------------------------
 
     site.last_scan_id = scan.id
     site.last_status = scan.status
@@ -351,9 +513,9 @@ def persist_scan(
     site.last_risk_level = scan.risk_level
     site.updated_at = utc_now()
 
-    # ========================================================
-    # DETECT CHANGES
-    # ========================================================
+    # --------------------------------------------------------
+    # DETECT MONITORING CHANGES
+    # --------------------------------------------------------
 
     events = detect_scan_changes(
         db=db,
@@ -362,100 +524,94 @@ def persist_scan(
         current_scan=scan,
     )
 
-    # IMPORTANT:
-    # detect_scan_changes() uses db.add(event).
-    #
-    # Database-generated event IDs are not guaranteed to
-    # exist until SQLAlchemy flushes the pending INSERTs.
-    #
-    # Therefore flush events BEFORE creating alerts.
-    if events:
-        db.flush()
-
-    # ========================================================
-    # CREATE ALERTS
-    # ========================================================
+    # --------------------------------------------------------
+    # CREATE USER-FACING ALERTS
+    # --------------------------------------------------------
 
     alerts = create_alerts_from_events(
         db=db,
         events=events,
     )
 
-    # IMPORTANT:
-    # Flush alerts so their IDs are available for the
-    # WebSocket payload before commit.
-    if alerts:
-        db.flush()
-
-    # ========================================================
-    # COMMIT
-    # ========================================================
+    # --------------------------------------------------------
+    # COMMIT SCAN + EVENTS + ALERTS TOGETHER
+    # --------------------------------------------------------
 
     db.commit()
 
     db.refresh(scan)
 
-    # Refresh generated event/alert fields after commit.
-    for event in events:
-        db.refresh(event)
-
-    for alert in alerts:
-        db.refresh(alert)
+    # --------------------------------------------------------
+    # MONITORING LOGGING
+    # --------------------------------------------------------
 
     print(
-        f"[MONITORING] Created scan #{scan.id} "
+        f"[MONITORING] "
+        f"Created scan #{scan.id} "
         f"for site #{site.id}"
     )
 
-    # ========================================================
-    # EVENT LOG
-    # ========================================================
+    # --------------------------------------------------------
+    # EVENT LOGGING
+    # --------------------------------------------------------
 
     if events:
+
         print(
-            f"[MONITORING] Detected "
-            f"{len(events)} event(s)"
+            f"[MONITORING] "
+            f"Detected {len(events)} event(s)"
         )
 
         for event in events:
+
             print(
-                f"[EVENT] {event.event_type} | "
+                f"[EVENT] "
+                f"{event.event_type} | "
                 f"{event.severity} | "
-                f"{event.title} | "
-                f"id={event.id}"
+                f"{event.title}"
             )
 
     else:
+
         print(
-            "[MONITORING] No security changes detected."
+            "[MONITORING] "
+            "No security changes detected."
         )
 
-    # ========================================================
-    # ALERT LOG
-    # ========================================================
+    # --------------------------------------------------------
+    # ALERT LOGGING
+    # --------------------------------------------------------
 
     if alerts:
+
         print(
-            f"[ALERTS] Created "
-            f"{len(alerts)} alert(s)"
+            f"[ALERTS] "
+            f"Created {len(alerts)} alert(s)"
         )
 
         for alert in alerts:
+
             print(
-                f"[ALERT] {alert.severity} | "
-                f"{alert.title} | "
-                f"id={alert.id} | "
-                f"event_id={alert.event_id}"
+                f"[ALERT] "
+                f"{alert.severity} | "
+                f"{alert.title}"
             )
 
     else:
+
         print(
-            "[ALERTS] No alerts created."
+            "[ALERTS] "
+            "No alerts created."
         )
 
-    # ========================================================
-    # WEBSOCKET
-    # ========================================================
+    # --------------------------------------------------------
+    # REDIS + WEBSOCKET
+    # --------------------------------------------------------
+    #
+    # PostgreSQL transaction has already been committed.
+    # Redis is only a cache. If Redis fails, monitoring
+    # should continue and WebSocket should still work.
+    #
 
     broadcast_monitoring_update(
         site=site,
@@ -467,17 +623,23 @@ def persist_scan(
     return scan
 
 
+# ============================================================
+# RUN ONE MONITORING SCAN
+# ============================================================
+
+
 def run_monitoring_scan(
     db: Session,
     site: Site,
     previous_scan: Scan | None = None,
 ) -> Scan:
-    """Run scanner and persist the result."""
+    """
+    Run a scanner scan for one registered site
+    and persist the result.
 
-    print(
-        f"[MONITORING] Running scanner for "
-        f"{site.name} ({site.url})"
-    )
+    The previous scan is passed to the persistence
+    layer so security changes can be detected.
+    """
 
     scan_result = run_site_scan(
         site.url
@@ -491,8 +653,16 @@ def run_monitoring_scan(
     )
 
 
+# ============================================================
+# MONITOR ALL SITES
+# ============================================================
+
+
 def monitor_sites() -> dict:
-    """Scan all enabled sites whose monitoring interval is due."""
+    """
+    Check all enabled monitoring sites and
+    scan only the sites whose interval is due.
+    """
 
     db = SessionLocal()
 
@@ -501,6 +671,7 @@ def monitor_sites() -> dict:
     failed = []
 
     try:
+
         sites = (
             db.query(Site)
             .filter(
@@ -509,36 +680,49 @@ def monitor_sites() -> dict:
             .all()
         )
 
-        print(
-            f"[MONITORING] Enabled sites found: "
-            f"{len(sites)}"
-        )
-
         for site in sites:
 
             try:
+
+                # --------------------------------------------
+                # GET PREVIOUS SCAN
+                # --------------------------------------------
+
                 last_scan = get_last_scan(
                     db,
                     site,
                 )
 
+                # --------------------------------------------
+                # CHECK MONITORING INTERVAL
+                # --------------------------------------------
+
                 if not is_scan_due(
                     site,
                     last_scan,
                 ):
+
                     skipped.append(
                         {
                             "site_id": site.id,
                             "name": site.name,
-                            "reason": "interval_not_due",
+                            "reason": (
+                                "interval_not_due"
+                            ),
                         }
                     )
 
                     continue
 
+                # --------------------------------------------
+                # RUN MONITORING SCAN
+                # --------------------------------------------
+
                 print(
-                    f"[MONITORING] Scanning site: "
-                    f"{site.name} ({site.url})"
+                    f"[MONITORING] "
+                    f"Scanning site: "
+                    f"{site.name} "
+                    f"({site.url})"
                 )
 
                 scan = run_monitoring_scan(
@@ -546,6 +730,10 @@ def monitor_sites() -> dict:
                     site=site,
                     previous_scan=last_scan,
                 )
+
+                # --------------------------------------------
+                # STORE RESULT
+                # --------------------------------------------
 
                 scanned.append(
                     {
@@ -559,7 +747,8 @@ def monitor_sites() -> dict:
                 )
 
                 print(
-                    f"[MONITORING] Scan completed: "
+                    f"[MONITORING] "
+                    f"Scan completed: "
                     f"site={site.id}, "
                     f"scan={scan.id}, "
                     f"risk={scan.risk_score}, "
@@ -568,11 +757,16 @@ def monitor_sites() -> dict:
 
             except Exception as exc:
 
+                # Roll back only the failed site's
+                # transaction so the monitoring loop
+                # can continue with other sites.
+
                 db.rollback()
 
                 print(
                     f"[MONITORING ERROR] "
-                    f"Site {site.id} ({site.name}) failed: "
+                    f"Site {site.id} "
+                    f"({site.name}) failed: "
                     f"{exc}"
                 )
 
@@ -583,6 +777,10 @@ def monitor_sites() -> dict:
                         "error": str(exc),
                     }
                 )
+
+        # ----------------------------------------------------
+        # FINAL MONITORING STATUS
+        # ----------------------------------------------------
 
         status = (
             "completed"
@@ -599,4 +797,5 @@ def monitor_sites() -> dict:
         }
 
     finally:
+
         db.close()

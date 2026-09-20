@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
-
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, Integer, String, Text, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -9,19 +8,11 @@ from app.core.database import Base
 class Zone(Base):
     __tablename__ = "zones"
 
-    # ========================================================
-    # PRIMARY KEY
-    # ========================================================
-
     id: Mapped[int] = mapped_column(
         Integer,
         primary_key=True,
         index=True,
     )
-
-    # ========================================================
-    # ZONE INFORMATION
-    # ========================================================
 
     name: Mapped[str] = mapped_column(
         String(255),
@@ -39,10 +30,6 @@ class Zone(Base):
         nullable=True,
     )
 
-    # ========================================================
-    # RISK CONFIGURATION
-    # ========================================================
-
     risk_level: Mapped[str] = mapped_column(
         String(20),
         default="low",
@@ -50,9 +37,10 @@ class Zone(Base):
         index=True,
     )
 
-    # ========================================================
-    # TIMESTAMPS
-    # ========================================================
+    polygon: Mapped[list[list[float]] | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

@@ -14,6 +14,8 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 
 DEFAULT_MODEL = str(BASE_DIR / "models" / "best.pt")
 
+PERSON_MODEL = str(BASE_DIR / "models" / "yolo11n.pt")
+
 SUPPORTED_MODEL_EXTENSIONS = {
     ".pt",
     ".onnx",
@@ -87,7 +89,13 @@ def normalize_label(label: Any) -> str:
     if label is None:
         return ""
 
-    return str(label).strip().lower().replace("-", "_").replace(" ", "_")
+    return (
+        str(label)
+        .strip()
+        .lower()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
 
 
 def create_detection(
@@ -156,7 +164,10 @@ def detect_objects_from_image(
 
             confidence = float(box.conf[0].item())
 
-            label = names.get(class_id, str(class_id))
+            label = names.get(
+                class_id,
+                str(class_id),
+            )
 
             coordinates = box.xyxy[0].tolist()
 
@@ -174,7 +185,9 @@ def detect_objects_from_image(
                     detected_object=label,
                     class_id=class_id,
                     bounding_box=bounding_box,
-                    model_path=str(Path(model_path).resolve()),
+                    model_path=str(
+                        Path(model_path).resolve()
+                    ),
                 )
             )
 
@@ -192,6 +205,96 @@ def detect_objects_from_frame(
 ) -> list[VisionDetection]:
 
     return detect_objects_from_image(
+        image=frame,
+        model_path=model_path,
+        minimum_confidence=minimum_confidence,
+    )
+
+
+# ============================================================
+# PERSON DETECTION
+# ============================================================
+
+def detect_persons_from_image(
+    image: Any,
+    model_path: str = PERSON_MODEL,
+    minimum_confidence: float = 0.25,
+) -> list[VisionDetection]:
+
+    if image is None:
+        raise ValueError("Image is required.")
+
+    print("[VISION] Running person detection...")
+
+    model = load_model(model_path)
+
+    results = model.predict(
+        source=image,
+        conf=minimum_confidence,
+        verbose=False,
+    )
+
+    detections: list[VisionDetection] = []
+
+    for result in results:
+
+        names = result.names or {}
+
+        if result.boxes is None:
+            continue
+
+        for box in result.boxes:
+
+            class_id = int(box.cls[0].item())
+
+            confidence = float(box.conf[0].item())
+
+            label = normalize_label(
+                names.get(
+                    class_id,
+                    str(class_id),
+                )
+            )
+
+            if label != "person":
+                continue
+
+            coordinates = box.xyxy[0].tolist()
+
+            bounding_box = [
+                round(float(coordinates[0]), 2),
+                round(float(coordinates[1]), 2),
+                round(float(coordinates[2]), 2),
+                round(float(coordinates[3]), 2),
+            ]
+
+            detections.append(
+                create_detection(
+                    label="person",
+                    confidence=confidence,
+                    detected_object="person",
+                    class_id=class_id,
+                    bounding_box=bounding_box,
+                    model_path=str(
+                        Path(model_path).resolve()
+                    ),
+                )
+            )
+
+    print(
+        f"[VISION] Detected {len(detections)} person(s)"
+    )
+
+    return detections
+
+
+def detect_persons_from_frame(
+    frame: Any,
+    model_path: str = PERSON_MODEL,
+    minimum_confidence: float = 0.25,
+) -> list[VisionDetection]:
+
+    return detect_persons_from_image(
         image=frame,
         model_path=model_path,
         minimum_confidence=minimum_confidence,
@@ -221,7 +324,9 @@ def filter_detections(
             continue
 
         if normalized_labels:
-            if normalize_label(detection.label) not in normalized_labels:
+            if normalize_label(
+                detection.label
+            ) not in normalized_labels:
                 continue
 
         filtered.append(detection)
@@ -313,7 +418,9 @@ def get_ppe_violations(
 
     for detection in detections:
 
-        label = normalize_label(detection.label)
+        label = normalize_label(
+            detection.label
+        )
 
         if label in PPE_VIOLATIONS:
             violations.append(detection)
@@ -333,9 +440,14 @@ def count_labels(
 
     for detection in detections:
 
-        label = normalize_label(detection.label)
+        label = normalize_label(
+            detection.label
+        )
 
-        counts[label] = counts.get(label, 0) + 1
+        counts[label] = counts.get(
+            label,
+            0,
+        ) + 1
 
     return counts
 
@@ -409,9 +521,14 @@ def analyze_ppe_image(
 
     counts = count_labels(detections)
 
-    violations = get_ppe_violations(detections)
+    violations = get_ppe_violations(
+        detections
+    )
 
-    worker_count = counts.get("person", 0)
+    worker_count = counts.get(
+        "person",
+        0,
+    )
 
     hardhat_count = (
         counts.get("hardhat", 0)
@@ -558,7 +675,9 @@ def analyze_ppe_image(
             {
                 **violation.to_dict(),
                 "violation_type": PPE_VIOLATIONS.get(
-                    normalize_label(violation.label),
+                    normalize_label(
+                        violation.label
+                    ),
                     "unknown",
                 ),
             }

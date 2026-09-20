@@ -63,12 +63,16 @@ def validate_zone(
         raise ValueError("Zone not found")
 
 
-def normalize_severity(severity: str | None) -> str:
+def normalize_severity(
+    severity: str | None,
+) -> str:
     """
     Normalize and validate event severity.
     """
 
-    normalized = (severity or "low").strip().lower()
+    normalized = (
+        severity or "low"
+    ).strip().lower()
 
     if normalized not in VALID_SEVERITIES:
         raise ValueError(
@@ -79,12 +83,16 @@ def normalize_severity(severity: str | None) -> str:
     return normalized
 
 
-def normalize_status(status: str | None) -> str:
+def normalize_status(
+    status: str | None,
+) -> str:
     """
     Normalize and validate event status.
     """
 
-    normalized = (status or "active").strip().lower()
+    normalized = (
+        status or "active"
+    ).strip().lower()
 
     if normalized not in VALID_STATUSES:
         raise ValueError(
@@ -115,7 +123,9 @@ def normalize_confidence(
     return float(confidence)
 
 
-def normalize_risk_score(risk_score: int | None) -> int:
+def normalize_risk_score(
+    risk_score: int | None,
+) -> int:
     """
     Normalize AI-generated risk score.
 
@@ -211,14 +221,64 @@ def get_safety_event(
 
 def get_safety_events(
     db: Session,
+    status: str | None = None,
+    severity: str | None = None,
+    event_type: str | None = None,
+    camera_id: int | None = None,
+    zone_id: int | None = None,
+    limit: int = 100,
 ) -> list[SafetyEvent]:
     """
-    Return all safety events ordered by newest first.
+    Return safety events ordered by newest first.
+
+    Optional filters:
+    - status
+    - severity
+    - event_type
+    - camera_id
+    - zone_id
+
+    Results are limited to the requested number of events.
     """
 
+    query = db.query(SafetyEvent)
+
+    if status is not None:
+        normalized_status = normalize_status(status)
+
+        query = query.filter(
+            SafetyEvent.status == normalized_status
+        )
+
+    if severity is not None:
+        normalized_severity = normalize_severity(severity)
+
+        query = query.filter(
+            SafetyEvent.severity == normalized_severity
+        )
+
+    if event_type is not None:
+        normalized_event_type = event_type.strip()
+
+        if normalized_event_type:
+            query = query.filter(
+                SafetyEvent.event_type == normalized_event_type
+            )
+
+    if camera_id is not None:
+        query = query.filter(
+            SafetyEvent.camera_id == camera_id
+        )
+
+    if zone_id is not None:
+        query = query.filter(
+            SafetyEvent.zone_id == zone_id
+        )
+
     return (
-        db.query(SafetyEvent)
+        query
         .order_by(SafetyEvent.id.desc())
+        .limit(limit)
         .all()
     )
 
@@ -226,7 +286,7 @@ def get_safety_events(
 def update_safety_event(
     db: Session,
     event_id: int,
-    event_data: SafetyEventUpdate,
+    event_data: SafetyEventUpdate | dict,
 ) -> SafetyEvent | None:
     """
     Update an existing SafetyEvent.
@@ -242,9 +302,12 @@ def update_safety_event(
     if event is None:
         return None
 
-    update_data = event_data.model_dump(
-        exclude_unset=True,
-    )
+    if isinstance(event_data, dict):
+        update_data = event_data
+    else:
+        update_data = event_data.model_dump(
+            exclude_unset=True,
+        )
 
     if "camera_id" in update_data:
         validate_camera(
@@ -304,11 +367,12 @@ def update_safety_event(
 def delete_safety_event(
     db: Session,
     event_id: int,
-) -> bool:
+) -> SafetyEvent | None:
     """
     Delete a SafetyEvent.
 
-    Returns True when deleted, False when not found.
+    Returns the deleted event when successful,
+    otherwise None.
     """
 
     event = get_safety_event(
@@ -317,9 +381,9 @@ def delete_safety_event(
     )
 
     if event is None:
-        return False
+        return None
 
     db.delete(event)
     db.commit()
 
-    return True
+    return event

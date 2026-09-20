@@ -8,6 +8,7 @@ from app.models import Site, Scan, MonitoringEvent
 
 def safe_json_loads(value: Any) -> Any:
     """Safely decode JSON values."""
+
     if value is None:
         return None
 
@@ -191,6 +192,10 @@ def detect_risk_change(
     SiteAegis uses:
         100 = best
         lower score = higher risk
+
+    Therefore:
+        current < previous -> risk increased
+        current > previous -> risk decreased
     """
 
     previous_score = previous_scan.risk_score
@@ -219,7 +224,8 @@ def detect_risk_change(
             title="Security risk increased",
             description=(
                 f"Risk score decreased from "
-                f"{previous_score} to {current_score}."
+                f"{previous_score} to {current_score}, "
+                f"indicating increased security risk."
             ),
             previous_value={
                 "score": previous_score,
@@ -248,7 +254,8 @@ def detect_risk_change(
             title="Security risk decreased",
             description=(
                 f"Risk score increased from "
-                f"{previous_score} to {current_score}."
+                f"{previous_score} to {current_score}, "
+                f"indicating decreased security risk."
             ),
             previous_value={
                 "score": previous_score,
