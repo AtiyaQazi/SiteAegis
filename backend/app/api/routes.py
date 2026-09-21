@@ -7,6 +7,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Query,
     UploadFile,
 )
 from PIL import Image
@@ -69,13 +70,6 @@ def create_safety_events_from_ppe(
     db: Session,
     ppe_analysis: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """
-    Convert PPE violations into SafetyEvent records.
-
-    SafetyEvent already contains the integration point for the
-    existing IncidentService. High-risk PPE violations therefore
-    automatically create incidents through create_safety_event().
-    """
 
     safety_events: list[dict[str, Any]] = []
     incidents_created: list[dict[str, Any]] = []
@@ -95,16 +89,8 @@ def create_safety_events_from_ppe(
         [],
     )
 
-    # --------------------------------------------------------
-    # Nothing to create
-    # --------------------------------------------------------
-
     if not violations:
         return safety_events, incidents_created
-
-    # --------------------------------------------------------
-    # Process each violation category
-    # --------------------------------------------------------
 
     for violation_key, config in PPE_VIOLATION_CONFIG.items():
 
@@ -112,11 +98,6 @@ def create_safety_events_from_ppe(
             violation_key,
             0,
         )
-
-        # ----------------------------------------------------
-        # If summary does not contain this category, inspect
-        # the violations list as a fallback.
-        # ----------------------------------------------------
 
         matching_violations = []
 
@@ -156,10 +137,6 @@ def create_safety_events_from_ppe(
                         violation
                     )
 
-        # ----------------------------------------------------
-        # Determine whether this violation exists
-        # ----------------------------------------------------
-
         if violation_count <= 0 and not matching_violations:
             continue
 
@@ -170,10 +147,6 @@ def create_safety_events_from_ppe(
 
         if violation_count <= 0:
             violation_count = 1
-
-        # ----------------------------------------------------
-        # Find best confidence for this violation
-        # ----------------------------------------------------
 
         confidence_values: list[float] = []
 
@@ -196,6 +169,7 @@ def create_safety_events_from_ppe(
                 violation_key in label
                 or config["detected_object"] in label
             ):
+
                 raw_confidence = detection.get(
                     "confidence"
                 )
@@ -217,14 +191,6 @@ def create_safety_events_from_ppe(
             if confidence_values
             else None
         )
-
-        # ----------------------------------------------------
-        # Create SafetyEvent
-        #
-        # PPE violations are treated as HIGH risk so the
-        # existing IncidentService can automatically create
-        # an Incident.
-        # ----------------------------------------------------
 
         description = (
             f"{violation_count} construction worker PPE "
@@ -262,10 +228,6 @@ def create_safety_events_from_ppe(
         except ValueError:
             raise
 
-        # ----------------------------------------------------
-        # Store SafetyEvent response
-        # ----------------------------------------------------
-
         safety_events.append(
             {
                 "event_id": event.id,
@@ -281,12 +243,6 @@ def create_safety_events_from_ppe(
                 "created_at": event.created_at,
             }
         )
-
-        # ----------------------------------------------------
-        # Existing IncidentService automatically creates an
-        # incident for high severity / risk >= 70.
-        # Retrieve it for the API response.
-        # ----------------------------------------------------
 
         incident = get_incident_by_event(
             db=db,
@@ -323,6 +279,7 @@ def scan_site(
     request: SiteRequest,
     db: Session = Depends(get_db),
 ):
+
     try:
 
         result = run_site_scan(
@@ -498,6 +455,7 @@ async def analyze_ppe(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
+
     try:
 
         # ----------------------------------------------------
@@ -561,10 +519,6 @@ async def analyze_ppe(
 
         # ----------------------------------------------------
         # Create SafetyEvents + Incidents
-        #
-        # Only actual violations are converted into events.
-        # If evidence is insufficient, no false incident is
-        # generated.
         # ----------------------------------------------------
 
         safety_events: list[dict[str, Any]] = []
@@ -650,6 +604,12 @@ async def analyze_ppe(
 
 @router.get("/history")
 def scan_history(
+    limit: int = Query(
+        50,
+        ge=1,
+        le=500,
+        description="Maximum number of scans to return.",
+    ),
     db: Session = Depends(get_db),
 ):
 
@@ -658,6 +618,7 @@ def scan_history(
         .order_by(
             Scan.created_at.desc()
         )
+        .limit(limit)
         .all()
     )
 

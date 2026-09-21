@@ -154,6 +154,18 @@ type LiveCameraState = {
   frames_processed?: number;
   events_created?: number;
   last_error?: string | null;
+  camera?: Camera;
+  live_analysis?: {
+    camera_id?: number | string;
+    status?: string;
+    thread_alive?: boolean;
+    frames_read?: number;
+    frames_processed?: number;
+    events_created?: number;
+    last_error?: string | null;
+    message?: string;
+    source?: string | null;
+  };
 };
 
 type SafetyLiveMessage = {
@@ -193,6 +205,96 @@ function extractArray<T>(data: unknown): T[] {
   }
 
   return [];
+}
+
+function normalizeLiveCameraState(
+  data: unknown,
+  cameraId: number | string,
+): LiveCameraState {
+  const value =
+    data && typeof data === "object"
+      ? (data as Record<string, unknown>)
+      : {};
+
+  const nested =
+    value.live_analysis &&
+    typeof value.live_analysis === "object"
+      ? (value.live_analysis as Record<string, unknown>)
+      : {};
+
+  const camera =
+    value.camera &&
+    typeof value.camera === "object"
+      ? (value.camera as Camera)
+      : undefined;
+
+  const normalizeCameraId = (
+    candidate: unknown,
+  ): number | string | undefined => {
+    if (
+      typeof candidate === "number" ||
+      typeof candidate === "string"
+    ) {
+      return candidate;
+    }
+
+    return undefined;
+  };
+
+  const normalizedCameraId =
+    normalizeCameraId(nested.camera_id) ??
+    normalizeCameraId(value.cameraId) ??
+    normalizeCameraId(value.camera_id) ??
+    normalizeCameraId(camera?.id) ??
+    cameraId;
+
+  return {
+    cameraId: normalizedCameraId,
+    status:
+      typeof nested.status === "string"
+        ? nested.status
+        : typeof value.status === "string"
+          ? value.status
+          : typeof camera?.status === "string"
+            ? camera.status
+            : "stopped",
+    thread_alive:
+      typeof nested.thread_alive === "boolean"
+        ? nested.thread_alive
+        : typeof value.thread_alive === "boolean"
+          ? value.thread_alive
+          : false,
+    frames_read:
+      typeof nested.frames_read === "number"
+        ? nested.frames_read
+        : typeof value.frames_read === "number"
+          ? value.frames_read
+          : 0,
+    frames_processed:
+      typeof nested.frames_processed === "number"
+        ? nested.frames_processed
+        : typeof value.frames_processed === "number"
+          ? value.frames_processed
+          : 0,
+    events_created:
+      typeof nested.events_created === "number"
+        ? nested.events_created
+        : typeof value.events_created === "number"
+          ? value.events_created
+          : 0,
+    last_error:
+      typeof nested.last_error === "string"
+        ? nested.last_error
+        : typeof value.last_error === "string"
+          ? value.last_error
+          : null,
+    camera,
+    live_analysis:
+      value.live_analysis &&
+      typeof value.live_analysis === "object"
+        ? (value.live_analysis as LiveCameraState["live_analysis"])
+        : undefined,
+  };
 }
 
 function normalizeSafetyEvent(
@@ -313,6 +415,9 @@ export default function Home() {
     useState(false);
 
   const [unreadAlertCount, setUnreadAlertCount] =
+    useState(0);
+
+  const [totalAlertCount, setTotalAlertCount] =
     useState(0);
 
   const [alertActionId, setAlertActionId] =
@@ -474,6 +579,15 @@ export default function Home() {
       ) {
         const countObject =
           countData as Record<string, unknown>;
+
+        if (
+          typeof countObject.total ===
+          "number"
+        ) {
+          setTotalAlertCount(
+            countObject.total,
+          );
+        }
 
         if (
           typeof countObject.unread ===
@@ -692,7 +806,10 @@ export default function Home() {
         (previous) => ({
           ...previous,
           [String(cameraId)]:
-            data as LiveCameraState,
+            normalizeLiveCameraState(
+              data,
+              cameraId,
+            ),
         }),
       );
     } catch (error) {
@@ -754,7 +871,10 @@ export default function Home() {
         (previous) => ({
           ...previous,
           [String(cameraId)]:
-            data as LiveCameraState,
+            normalizeLiveCameraState(
+              data,
+              cameraId,
+            ),
         }),
       );
 
@@ -825,7 +945,10 @@ export default function Home() {
         (previous) => ({
           ...previous,
           [String(cameraId)]:
-            data as LiveCameraState,
+            normalizeLiveCameraState(
+              data,
+              cameraId,
+            ),
         }),
       );
     } catch (error) {
@@ -921,6 +1044,16 @@ export default function Home() {
 
         if (
           countData &&
+          typeof countData.total ===
+            "number"
+        ) {
+          setTotalAlertCount(
+            countData.total,
+          );
+        }
+
+        if (
+          countData &&
           typeof countData.unread ===
             "number"
         ) {
@@ -986,6 +1119,16 @@ export default function Home() {
       if (countResponse.ok) {
         const countData =
           await countResponse.json();
+
+        if (
+          countData &&
+          typeof countData.total ===
+            "number"
+        ) {
+          setTotalAlertCount(
+            countData.total,
+          );
+        }
 
         if (
           countData &&
@@ -1178,6 +1321,16 @@ export default function Home() {
               : null,
           )
           .then((countData) => {
+            if (
+              countData &&
+              typeof countData.total ===
+                "number"
+            ) {
+              setTotalAlertCount(
+                countData.total,
+              );
+            }
+
             if (
               countData &&
               typeof countData.unread ===
@@ -2042,13 +2195,16 @@ export default function Home() {
       );
     }
 
-    return (
-      state.thread_alive === true ||
+    const status =
       String(
         state.status ??
           "",
-      ).toLowerCase() ===
-        "running"
+      ).toLowerCase();
+
+    return (
+      state.thread_alive === true ||
+      status === "running" ||
+      status === "starting"
     );
   }
 
@@ -2237,7 +2393,7 @@ export default function Home() {
         <div className="safety-stat-card">
           <div className="safety-stat-top">
             <span className="stat-label">
-              SAFETY EVENTS
+              ACTIVE EVENTS
             </span>
 
             <span className="safety-mini-icon">
@@ -2259,7 +2415,7 @@ export default function Home() {
           </strong>
 
           <small>
-            Detected safety events
+            Detected safety conditions
           </small>
         </div>
 
@@ -2972,6 +3128,25 @@ export default function Home() {
                     camera,
                   );
 
+                const frameCount =
+                  state?.frames_processed ??
+                  state?.live_analysis
+                    ?.frames_processed ??
+                  0;
+
+                const eventCount =
+                  state?.events_created ??
+                  state?.live_analysis
+                    ?.events_created ??
+                  0;
+
+                const cameraStatus =
+                  state?.status ??
+                  state?.live_analysis
+                    ?.status ??
+                  camera.status ??
+                  "offline";
+
                 return (
                   <div
                     className={`camera-card ${
@@ -3045,8 +3220,7 @@ export default function Home() {
 
                           <strong>
                             {
-                              state?.frames_processed ??
-                              0
+                              frameCount
                             }
                           </strong>
                         </div>
@@ -3058,8 +3232,7 @@ export default function Home() {
 
                           <strong>
                             {
-                              state?.events_created ??
-                              0
+                              eventCount
                             }
                           </strong>
                         </div>
@@ -3070,9 +3243,7 @@ export default function Home() {
                           </span>
 
                           <strong>
-                            {state?.status ??
-                              camera.status ??
-                              "offline"}
+                            {cameraStatus}
                           </strong>
                         </div>
                       </div>
@@ -3153,7 +3324,7 @@ export default function Home() {
             </h3>
 
             <small className="panel-subtitle">
-              {alerts.length} total alerts ·{" "}
+              {totalAlertCount || alerts.length} total alerts ·{" "}
               {unreadAlerts} requiring
               attention
             </small>

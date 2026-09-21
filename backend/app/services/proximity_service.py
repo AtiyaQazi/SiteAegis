@@ -1,10 +1,10 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from math import sqrt
 
 from sqlalchemy.orm import Session
 
-from app.schemas.safety_event import SafetyEventCreate
 from app.models.safety_event import SafetyEvent
+from app.schemas.safety_event import SafetyEventCreate
 from app.services.safety_service import create_safety_event
 from app.services.vision_service import VisionDetection
 
@@ -15,7 +15,12 @@ from app.services.vision_service import VisionDetection
 
 DEFAULT_PROXIMITY_THRESHOLD = 120.0
 
-PROXIMITY_EVENT_COOLDOWN_SECONDS = 10
+# Spatial tolerances used to determine whether a proximity
+# relationship in the current frame represents the same
+# active relationship already stored in the database.
+PROXIMITY_BOX_GAP_TOLERANCE = 35.0
+PROXIMITY_CENTER_DISTANCE_TOLERANCE = 50.0
+PROXIMITY_THRESHOLD_TOLERANCE = 1.0
 
 MACHINE_LABELS = {
     # COCO / general object classes
@@ -109,10 +114,16 @@ def get_bounding_box(
     if len(bounding_box) != 4:
         return None
 
-    return [
-        float(value)
-        for value in bounding_box
-    ]
+    try:
+        return [
+            float(value)
+            for value in bounding_box
+        ]
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
 
 
 def get_center(
@@ -214,10 +225,12 @@ def is_machine(
         detection.label
     )
 
-    return normalized_label in {
+    normalized_machine_labels = {
         normalize_detection_label(label)
         for label in MACHINE_LABELS
     }
+
+    return normalized_label in normalized_machine_labels
 
 
 # ============================================================
@@ -345,15 +358,11 @@ def create_proximity_relationship_key(
     proximity_event: dict,
 ) -> str:
     """
-    Create a stable-enough relationship key from the
-    worker and machine labels plus their bounding boxes.
+    Create a stable spatial relationship key.
 
-    This allows cooldown to apply to the same spatial
-    worker-machine relationship without suppressing
-    separate workers or machines.
-
-    The coordinates are rounded to reduce tiny frame-to-frame
-    detection changes from creating a completely new key.
+    Bounding-box coordinates are rounded to 25-pixel buckets
+    so small frame-to-frame detection changes do not create
+    a new logical relationship.
     """
 
     worker = proximity_event.get(
@@ -409,35 +418,254 @@ def create_proximity_relationship_key(
 
 
 # ============================================================
-# DATABASE COOLDOWN
+# DATABASE RELATIONSHIP MATCHING
 # ============================================================
 
-def has_recent_proximity_event(
-    db: Session,
+def _parse_event_geometry(
+    event: SafetyEvent,
+) -> dict | None:
+    """
+    Extract persisted proximity geometry from an existing
+    SafetyEvent description.
+    """
+
+    description = event.description or ""
+
+    worker_label = None
+    machine_label = None
+    box_gap = None
+    threshold = None
+    center_distance = None
+
+    for raw_part in description.split("."):
+        part = raw_part.strip()
+
+        if part.startswith("Worker:"):
+            worker_label = part.split(
+                ":",
+                1,
+            )[1].strip()
+
+        elif part.startswith("Machine:"):
+            machine_label = part.split(
+                ":",
+                1,
+            )[1].strip()
+
+        elif part.startswith(
+            "Bounding-box gap:"
+        ):
+            try:
+                box_gap = float(
+                    part.split(
+                        ":",
+                        1,
+                    )[1]
+                    .replace(
+                        "pixels",
+                        "",
+                    )
+                    .strip()
+                )
+            except (
+                ValueError,
+                IndexError,
+            ):
+                pass
+
+        elif part.startswith(
+            "Allowed threshold:"
+        ):
+            try:
+                threshold = float(
+                    part.split(
+                        ":",
+                        1,
+                    )[1]
+                    .replace(
+                        "pixels",
+                        "",
+                    )
+                    .strip()
+                )
+            except (
+                ValueError,
+                IndexError,
+            ):
+                pass
+
+        elif part.startswith(
+            "Center distance:"
+        ):
+            try:
+                center_distance = float(
+                    part.split(
+                        ":",
+                        1,
+                    )[1]
+                    .replace(
+                        "pixels",
+                        "",
+                    )
+                    .strip()
+                )
+            except (
+                ValueError,
+                IndexError,
+            ):
+                pass
+
+    if (
+        worker_label is None
+        or machine_label is None
+        or box_gap is None
+        or threshold is None
+        or center_distance is None
+    ):
+        return None
+
+    return {
+        "worker_label": worker_label,
+        "machine_label": machine_label,
+        "box_gap": box_gap,
+        "threshold": threshold,
+        "center_distance": center_distance,
+    }
+
+
+def _proximity_relationship_matches(
+    event: SafetyEvent,
     proximity_event: dict,
-    camera_id: int | None = None,
 ) -> bool:
     """
-    Prevent repeated events for the same worker-machine
-    spatial relationship during the cooldown period.
-
-    Unlike the previous camera-wide cooldown, this does
-    not suppress a different worker or different machine.
+    Determine whether a persisted SafetyEvent represents
+    the same worker-machine relationship as the current
+    detection.
     """
 
-    cutoff = (
-        datetime.now(timezone.utc)
-        - timedelta(
-            seconds=PROXIMITY_EVENT_COOLDOWN_SECONDS
+    persisted = _parse_event_geometry(
+        event
+    )
+
+    if persisted is None:
+        return False
+
+    worker = proximity_event.get(
+        "worker",
+        {},
+    )
+
+    machine = proximity_event.get(
+        "machine",
+        {},
+    )
+
+    current_worker_label = worker.get(
+        "label",
+        "person",
+    )
+
+    current_machine_label = machine.get(
+        "label",
+        "machine",
+    )
+
+    current_worker_normalized = (
+        normalize_detection_label(
+            current_worker_label
         )
     )
+
+    current_machine_normalized = (
+        normalize_detection_label(
+            current_machine_label
+        )
+    )
+
+    persisted_worker_normalized = (
+        normalize_detection_label(
+            persisted["worker_label"]
+        )
+    )
+
+    persisted_machine_normalized = (
+        normalize_detection_label(
+            persisted["machine_label"]
+        )
+    )
+
+    if (
+        persisted_worker_normalized
+        != current_worker_normalized
+    ):
+        return False
+
+    if (
+        persisted_machine_normalized
+        != current_machine_normalized
+    ):
+        return False
+
+    current_box_gap = float(
+        proximity_event.get(
+            "box_gap_pixels",
+            0,
+        )
+    )
+
+    current_center_distance = float(
+        proximity_event.get(
+            "distance_pixels",
+            0,
+        )
+    )
+
+    current_threshold = float(
+        proximity_event.get(
+            "threshold_pixels",
+            DEFAULT_PROXIMITY_THRESHOLD,
+        )
+    )
+
+    if abs(
+        persisted["box_gap"]
+        - current_box_gap
+    ) > PROXIMITY_BOX_GAP_TOLERANCE:
+        return False
+
+    if abs(
+        persisted["center_distance"]
+        - current_center_distance
+    ) > PROXIMITY_CENTER_DISTANCE_TOLERANCE:
+        return False
+
+    if abs(
+        persisted["threshold"]
+        - current_threshold
+    ) > PROXIMITY_THRESHOLD_TOLERANCE:
+        return False
+
+    return True
+
+
+def get_active_proximity_events(
+    db: Session,
+    camera_id: int | None = None,
+) -> list[SafetyEvent]:
+    """
+    Retrieve currently active worker-machine proximity
+    events from the database.
+
+    The database is the persistent source of truth, so this
+    continues to work after a Python-process restart.
+    """
 
     query = (
         db.query(SafetyEvent)
         .filter(
             SafetyEvent.event_type
             == "worker_machine_proximity",
-            SafetyEvent.occurred_at >= cutoff,
+            SafetyEvent.status == "active",
         )
     )
 
@@ -446,154 +674,126 @@ def has_recent_proximity_event(
             SafetyEvent.camera_id == camera_id
         )
 
-    recent_events = query.all()
+    return query.order_by(
+        SafetyEvent.id.asc()
+    ).all()
 
-    current_key = create_proximity_relationship_key(
-        proximity_event
+
+def find_matching_active_proximity_event(
+    db: Session,
+    proximity_event: dict,
+    camera_id: int | None = None,
+) -> SafetyEvent | None:
+    """
+    Find the persisted active SafetyEvent representing
+    the same worker-machine relationship.
+    """
+
+    active_events = get_active_proximity_events(
+        db=db,
+        camera_id=camera_id,
     )
 
-    for event in recent_events:
-        description = event.description or ""
-
-        worker_label = "person"
-        machine_label = event.detected_object or "machine"
-
-        worker_marker = f"Worker: {worker_label}."
-        machine_marker = f"Machine: {machine_label}."
-
-        if (
-            worker_marker not in description
-            or machine_marker not in description
+    for event in active_events:
+        if _proximity_relationship_matches(
+            event=event,
+            proximity_event=proximity_event,
         ):
-            continue
+            return event
 
-        event_box_gap = None
-        event_threshold = None
-        event_center_distance = None
+    return None
 
-        try:
-            for part in description.split("."):
-                part = part.strip()
 
-                if part.startswith(
-                    "Bounding-box gap:"
-                ):
-                    event_box_gap = float(
-                        part.split(":")[1]
-                        .replace(
-                            "pixels",
-                            "",
-                        )
-                        .strip()
-                    )
+# ============================================================
+# BACKWARD-COMPATIBLE DUPLICATE CHECK
+# ============================================================
 
-                elif part.startswith(
-                    "Allowed threshold:"
-                ):
-                    event_threshold = float(
-                        part.split(":")[1]
-                        .replace(
-                            "pixels",
-                            "",
-                        )
-                        .strip()
-                    )
+def has_recent_proximity_event(
+    db: Session,
+    proximity_event: dict,
+    camera_id: int | None = None,
+) -> bool:
+    """
+    Backward-compatible helper.
 
-                elif part.startswith(
-                    "Center distance:"
-                ):
-                    event_center_distance = float(
-                        part.split(":")[1]
-                        .replace(
-                            "pixels",
-                            "",
-                        )
-                        .strip()
-                    )
+    Proximity deduplication is now based on active-event
+    lifecycle rather than a time-based cooldown.
+    """
 
-        except (
-            ValueError,
-            IndexError,
-        ):
-            continue
+    return (
+        find_matching_active_proximity_event(
+            db=db,
+            proximity_event=proximity_event,
+            camera_id=camera_id,
+        )
+        is not None
+    )
 
-        if (
-            event_box_gap is None
-            or event_threshold is None
-            or event_center_distance is None
-        ):
-            continue
 
-        current_worker = (
-            proximity_event.get(
-                "worker",
-                {},
+# ============================================================
+# ACTIVE EVENT RESOLUTION
+# ============================================================
+
+def resolve_active_proximity_event(
+    db: Session,
+    event: SafetyEvent,
+) -> SafetyEvent:
+    """
+    Resolve an active proximity event when the corresponding
+    worker-machine relationship is no longer detected.
+    """
+
+    event.status = "resolved"
+    db.add(event)
+
+    return event
+
+
+def resolve_missing_proximity_events(
+    db: Session,
+    current_proximity_events: list[dict],
+    camera_id: int | None = None,
+) -> int:
+    """
+    Resolve active proximity events whose relationships are
+    absent from the current frame.
+
+    This gives proximity detection an explicit lifecycle:
+
+        active -> resolved
+
+    A later reappearance creates a new SafetyEvent.
+    """
+
+    active_events = get_active_proximity_events(
+        db=db,
+        camera_id=camera_id,
+    )
+
+    resolved_count = 0
+
+    for active_event in active_events:
+        still_present = False
+
+        for current_event in current_proximity_events:
+            if _proximity_relationship_matches(
+                event=active_event,
+                proximity_event=current_event,
+            ):
+                still_present = True
+                break
+
+        if not still_present:
+            resolve_active_proximity_event(
+                db=db,
+                event=active_event,
             )
-        )
+            resolved_count += 1
 
-        current_machine = (
-            proximity_event.get(
-                "machine",
-                {},
-            )
-        )
+    if resolved_count:
+        db.commit()
 
-        current_worker_box = current_worker.get(
-            "bounding_box",
-            [],
-        )
-
-        current_machine_box = current_machine.get(
-            "bounding_box",
-            [],
-        )
-
-        if (
-            not current_worker_box
-            or not current_machine_box
-        ):
-            continue
-
-        current_box_gap = proximity_event.get(
-            "box_gap_pixels",
-            0,
-        )
-
-        current_center_distance = proximity_event.get(
-            "distance_pixels",
-            0,
-        )
-
-        # Spatial tolerance keeps the same detected
-        # worker-machine pair grouped across nearby frames.
-        box_gap_matches = abs(
-            float(event_box_gap)
-            - float(current_box_gap)
-        ) <= 35.0
-
-        center_distance_matches = abs(
-            float(event_center_distance)
-            - float(current_center_distance)
-        ) <= 50.0
-
-        threshold_matches = abs(
-            float(event_threshold)
-            - float(
-                proximity_event.get(
-                    "threshold_pixels",
-                    DEFAULT_PROXIMITY_THRESHOLD,
-                )
-            )
-        ) <= 1.0
-
-        if (
-            box_gap_matches
-            and center_distance_matches
-            and threshold_matches
-        ):
-            return True
-
-    return False
+    return resolved_count
 
 
 # ============================================================
@@ -608,8 +808,8 @@ def create_worker_machine_proximity_event(
     """
     Convert a proximity detection into a SafetyEvent.
 
-    Cooldown is applied to the individual worker-machine
-    relationship rather than the entire camera.
+    A new event is created only when the same relationship
+    does not already have an active database event.
     """
 
     if not proximity_event:
@@ -620,11 +820,15 @@ def create_worker_machine_proximity_event(
     ):
         return None
 
-    if has_recent_proximity_event(
-        db=db,
-        proximity_event=proximity_event,
-        camera_id=camera_id,
-    ):
+    existing_event = (
+        find_matching_active_proximity_event(
+            db=db,
+            proximity_event=proximity_event,
+            camera_id=camera_id,
+        )
+    )
+
+    if existing_event is not None:
         return None
 
     worker = proximity_event.get(
@@ -693,19 +897,31 @@ def create_worker_machine_proximity_event(
         )
     )
 
-    box_gap = proximity_event.get(
-        "box_gap_pixels",
-        0,
+    box_gap = float(
+        proximity_event.get(
+            "box_gap_pixels",
+            0,
+        )
     )
 
-    threshold = proximity_event.get(
-        "threshold_pixels",
-        DEFAULT_PROXIMITY_THRESHOLD,
+    threshold = float(
+        proximity_event.get(
+            "threshold_pixels",
+            DEFAULT_PROXIMITY_THRESHOLD,
+        )
     )
 
-    center_distance = proximity_event.get(
-        "distance_pixels",
-        0,
+    center_distance = float(
+        proximity_event.get(
+            "distance_pixels",
+            0,
+        )
+    )
+
+    relationship_key = (
+        create_proximity_relationship_key(
+            proximity_event
+        )
     )
 
     event_data = SafetyEventCreate(
@@ -719,10 +935,14 @@ def create_worker_machine_proximity_event(
             f"{machine_label}. "
             f"Worker: {worker_label}. "
             f"Machine: {machine_label}. "
-            f"Bounding-box gap: {box_gap:.2f} pixels. "
-            f"Allowed threshold: {threshold:.2f} pixels. "
+            f"Bounding-box gap: "
+            f"{box_gap:.2f} pixels. "
+            f"Allowed threshold: "
+            f"{threshold:.2f} pixels. "
             f"Center distance: "
-            f"{center_distance:.2f} pixels."
+            f"{center_distance:.2f} pixels. "
+            f"Relationship key: "
+            f"{relationship_key}."
         ),
         confidence=confidence,
         detected_object=machine_label,
@@ -753,18 +973,24 @@ def process_worker_machine_proximity(
 
     1. Detect workers and machines.
     2. Calculate bounding-box proximity.
-    3. Create SafetyEvent for each independent
-       worker-machine relationship.
-    4. Suppress repeated events for the same relationship
-       during the cooldown period.
-    5. Existing safety service automatically creates
-       an Incident when risk is high/critical.
+    3. Resolve relationships no longer present.
+    4. Create SafetyEvent for new relationships.
+    5. Keep existing relationships active without duplicates.
+    6. Use the database as persistent lifecycle state.
     """
 
     proximity_events = (
         detect_worker_machine_proximity(
             detections=detections,
             threshold=threshold,
+        )
+    )
+
+    resolved_count = (
+        resolve_missing_proximity_events(
+            db=db,
+            current_proximity_events=proximity_events,
+            camera_id=camera_id,
         )
     )
 
@@ -801,6 +1027,7 @@ def process_worker_machine_proximity(
         "events_created": len(
             events_created
         ),
+        "events_resolved": resolved_count,
         "worker_count": worker_count,
         "machine_count": machine_count,
         "proximity_events": len(
