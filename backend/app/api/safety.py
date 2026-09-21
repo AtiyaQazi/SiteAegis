@@ -240,7 +240,7 @@ def delete_safety_event_api(
 @router.post("/proximity/analyze")
 async def analyze_proximity_api(
     file: UploadFile = File(...),
-    camera_id: Optional[int] = Form(None),
+    camera_id: Optional[int] = Query(None),
     proximity_threshold: float = Form(
         DEFAULT_PROXIMITY_THRESHOLD
     ),
@@ -332,7 +332,7 @@ async def analyze_proximity_api(
 @router.post("/crowding/analyze")
 async def analyze_crowding_api(
     file: UploadFile = File(...),
-    camera_id: Optional[int] = Form(None),
+    camera_id: Optional[int] = Query(None),
     crowd_threshold: int = Form(
         DEFAULT_CROWD_THRESHOLD
     ),
@@ -437,7 +437,7 @@ async def analyze_crowding_api(
 @router.post("/fall/analyze")
 async def analyze_fall_api(
     file: UploadFile = File(...),
-    camera_id: Optional[int] = Form(None),
+    camera_id: Optional[int] = Query(None),
     fall_aspect_ratio: float = Form(
         DEFAULT_FALL_ASPECT_RATIO
     ),
@@ -537,7 +537,7 @@ async def analyze_fall_api(
 async def analyze_unsafe_movement_api(
     previous_file: UploadFile = File(...),
     current_file: UploadFile = File(...),
-    camera_id: Optional[int] = Form(None),
+    camera_id: Optional[int] = Query(None),
     movement_threshold: float = Form(
         DEFAULT_MOVEMENT_THRESHOLD
     ),

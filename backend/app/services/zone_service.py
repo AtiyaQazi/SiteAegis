@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.safety_event import SafetyEvent
 from app.models.zone import Zone
 from app.models.zone_presence import ZonePresence
+from app.services.incident_service import create_incident_from_event
 
 
 # ============================================================
@@ -948,8 +949,9 @@ def create_restricted_zone_event(
     """
     Create one restricted-zone SafetyEvent.
 
-    Incident creation is handled by the existing
-    SiteAegis safety/incident pipeline.
+    High-risk restricted-zone events are automatically
+    converted into Incidents through the central
+    SiteAegis incident pipeline.
     """
 
     confidence = get_detection_value(
@@ -1035,5 +1037,26 @@ def create_restricted_zone_event(
     )
 
     db.flush()
+
+    # --------------------------------------------------------
+    # CENTRAL INCIDENT PIPELINE
+    # --------------------------------------------------------
+    #
+    # This ensures high/critical restricted-zone events
+    # create an Incident using the same mechanism as:
+    #
+    #   proximity
+    #   fall detection
+    #   unsafe movement
+    #   other safety events
+    #
+    # Incident creation rules are centralized inside
+    # incident_service.py.
+    #
+
+    create_incident_from_event(
+        db=db,
+        event=event,
+    )
 
     return event
